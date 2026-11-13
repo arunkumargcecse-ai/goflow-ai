@@ -1,0 +1,106 @@
+name: goflow.ai CI
+
+on:
+  push:
+    branches:
+      - main
+      - codex/studio-editor-upgrade
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  frontend-static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate HTML structure and inline JavaScript syntax
+        run: |
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+
+          class CheckHTML(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.stack = []
+                  self.scripts = []
+                  self.in_script = False
+                  self.current = []
+
+              def handle_starttag(self, tag, attrs):
+                  if tag == "script":
+                      self.in_script = True
+                      self.current = []
+                  if tag not in {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}:
+                      self.stack.append(tag)
+
+              def handle_endtag(self, tag):
+                  if tag == "script" and self.in_script:
+                      self.scripts.append("".join(self.current))
+                      self.in_script = False
+                  if tag in self.stack:
+                      self.stack = self.stack[:len(self.stack) - 1 - self.stack[::-1].index(tag)]
+
+              def handle_data(self, data):
+                  if self.in_script:
+                      self.current.append(data)
+
+          html = Path("index.html").read_text(encoding="utf-8")
+          parser = CheckHTML()
+          parser.feed(html)
+          parser.close()
+          assert "<!doctype html>" in html.lower(), "Missing HTML5 doctype"
+          assert parser.scripts, "No inline JavaScript found"
+          Path("/tmp/goflow-inline.js").write_text("\n".join(parser.scripts), encoding="utf-8")
+          print(f"HTML parsed; extracted {len(parser.scripts)} inline script block(s)")
+          PY
+          node --check /tmp/goflow-inline.js
+
+  backend-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend requirements
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile backend
+        working-directory: backend
+        run: python -m compileall -q main.py
+      - name: Start API and smoke-test endpoints
+        working-directory: backend
+        run: |
+          nohup python -m uvicorn main:app --host 127.0.0.1 --port 8000 >/tmp/goflow-api.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:8000/health >/tmp/health.json; then
+              break
+            fi
+            sleep 1
+          done
+          python - <<'PY'
+          import json
+          from urllib.request import urlopen
+
+          def get(path):
+              with urlopen("http://127.0.0.1:8000" + path, timeout=5) as response:
+                  assert response.status == 200
+                  return json.loads(response.read())
+
+          root = get("/")
+          health = get("/health")
+          capabilities = get("/api/v1/capabilities")
+          assert root["app"] == "goflow.ai"
+          assert health["status"] == "healthy"
+          assert capabilities["story_planning"] is True
+          assert capabilities["storyboard"] is True
+          assert capabilities["timeline"] is True
+          print("Root, health and capabilities endpoints passed")
+          PY
