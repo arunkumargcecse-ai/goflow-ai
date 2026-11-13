@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -25,6 +25,14 @@ ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
 
 for directory in (UPLOAD_DIR, OUTPUT_DIR):
     directory.mkdir(parents=True, exist_ok=True)
+
+
+def require_api_key(x_goflow_key: str | None = Header(default=None)) -> None:
+    configured = os.getenv("GOFLOW_API_KEY")
+    if not configured:
+        raise HTTPException(503, "Media processing is disabled until GOFLOW_API_KEY is configured.")
+    if not x_goflow_key or x_goflow_key != configured:
+        raise HTTPException(401, "A valid goflow API key is required for media operations.")
 
 
 def utc_now() -> str:
@@ -202,7 +210,7 @@ def capabilities():
 
 
 @app.post("/api/v1/media/upload")
-async def upload_media(file: UploadFile = File(...)):
+async def upload_media(file: UploadFile = File(...), _authorized: None = __import__('fastapi').Depends(require_api_key)):
     original_name = Path(file.filename or "upload").name
     extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
@@ -241,7 +249,7 @@ async def upload_media(file: UploadFile = File(...)):
 
 
 @app.post("/api/v1/jobs/render", status_code=202)
-def create_render_job(request: RenderRequest, background_tasks: BackgroundTasks):
+def create_render_job(request: RenderRequest, background_tasks: BackgroundTasks, _authorized: None = __import__('fastapi').Depends(require_api_key)):
     media = get_media(request.media_id)
     if not media:
         raise HTTPException(404, "Media not found. Upload a source video first.")
