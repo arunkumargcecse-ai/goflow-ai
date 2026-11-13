@@ -118,8 +118,15 @@ def main() -> None:
                 raise AssertionError(f"Render submission failed ({status}): {body.decode(errors='replace')}")
             job_id = json.loads(body)["job_id"]
 
+            status, _, _ = request(base + f"/api/v1/jobs/{job_id}")
+            if status != 401:
+                raise AssertionError(f"Unauthenticated job status expected 401, got {status}")
+
             for _ in range(120):
-                status, _, body = request(base + f"/api/v1/jobs/{job_id}")
+                status, _, body = request(
+                    base + f"/api/v1/jobs/{job_id}",
+                    headers={"X-Goflow-Key": api_key},
+                )
                 if status != 200:
                     raise AssertionError(f"Job status failed ({status})")
                 job = json.loads(body)
