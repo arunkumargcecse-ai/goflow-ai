@@ -417,3 +417,11 @@ def job_output(job_id: str, _authorized: None = Depends(require_api_key)):
     if not path.is_file():
         raise HTTPException(410, "Rendered output is no longer available.")
     return FileResponse(path, media_type="video/mp4", filename=f"goflow-{job_id[:8]}.mp4")
+
+
+# Studio story and generation orchestration (all routes require the API key).
+from studio_routes import create_story_plan as _create_story_plan, router as studio_router
+
+# Bind the story planner through the same authenticated router surface.
+studio_router.add_api_route("/story/plan", _create_story_plan, methods=["POST"], include_in_schema=False)
+app.include_router(studio_router, prefix="/api/v1", dependencies=[Depends(require_api_key)])
