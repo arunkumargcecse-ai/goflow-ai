@@ -1,0 +1,31 @@
+services:
+  goflow-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: goflow-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "10000"
+      GOFLOW_DATA_DIR: /var/data
+      GOFLOW_CORS_ORIGINS: "https://arunkumargcecse-ai.github.io,http://localhost:5500,http://127.0.0.1:5500"
+    ports:
+      - "127.0.0.1:10000:10000"
+    volumes:
+      - goflow_data:/var/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:10000/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  goflow_data:
+    name: goflow_ai_data
