@@ -33,6 +33,41 @@ class MediaEngineFoundationTests(unittest.TestCase):
         self.assertEqual(job["status"], "queued")
         self.assertEqual(job["request"]["media_id"], "media-1")
 
+    def test_worker_claims_queued_jobs_atomically_and_in_order(self):
+        now = main.utc_now()
+        with main.connect_db() as db:
+            db.execute(
+                "INSERT INTO media (id, filename, stored_name, size_bytes, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("media-queue", "source.mp4", "source.mp4", 123, now),
+            )
+            for job_id in ("job-1", "job-2"):
+                db.execute(
+                    "INSERT INTO jobs (id, media_id, status, progress, request_json, created_at, updated_at) VALUES (?, ?, 'queued', 0, '{}', ?, ?)",
+                    (job_id, "media-queue", now, now),
+                )
+            db.commit()
+        self.assertEqual(main.claim_next_job(), "job-1")
+        self.assertEqual(main.claim_next_job(), "job-2")
+        self.assertIsNone(main.claim_next_job())
+
+    def test_worker_recovers_interrupted_processing_jobs(self):
+        now = main.utc_now()
+        with main.connect_db() as db:
+            db.execute(
+                "INSERT INTO media (id, filename, stored_name, size_bytes, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("media-recovery", "source.mp4", "source.mp4", 123, now),
+            )
+            db.execute(
+                "INSERT INTO jobs (id, media_id, status, progress, request_json, created_at, updated_at) VALUES (?, ?, 'processing', 35, '{}', ?, ?)",
+                ("job-recovery", "media-recovery", now, now),
+            )
+            db.commit()
+        self.assertEqual(main.recover_interrupted_jobs(), 1)
+        recovered = main.get_job("job-recovery")
+        self.assertEqual(recovered["status"], "queued")
+        self.assertEqual(recovered["progress"], 0)
+        self.assertEqual(main.claim_next_job(), "job-recovery")
+
     def test_render_request_applies_safe_defaults_and_bounds(self):
         request = main.RenderRequest(media_id="media-1")
         self.assertEqual(request.output_width, 1080)
