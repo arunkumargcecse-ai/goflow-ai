@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -210,7 +210,7 @@ def capabilities():
 
 
 @app.post("/api/v1/media/upload")
-async def upload_media(file: UploadFile = File(...), _authorized: None = __import__('fastapi').Depends(require_api_key)):
+async def upload_media(file: UploadFile = File(...), _authorized: None = Depends(require_api_key)):
     original_name = Path(file.filename or "upload").name
     extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_EXTENSIONS:
@@ -286,7 +286,7 @@ def job_status(job_id: str):
 
 
 @app.get("/api/v1/jobs/{job_id}/output")
-def job_output(job_id: str):
+def job_output(job_id: str, _authorized: None = Depends(require_api_key)):
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found.")
