@@ -1,5 +1,7 @@
+import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import main
@@ -38,6 +40,17 @@ class MediaEngineFoundationTests(unittest.TestCase):
         self.assertEqual(request.preset, "balanced")
         with self.assertRaises(Exception):
             main.RenderRequest(media_id="media-1", output_width=10000)
+
+    def test_media_endpoints_require_configured_api_key(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(main.HTTPException) as missing:
+                main.require_api_key("any-key")
+            self.assertEqual(missing.exception.status_code, 503)
+        with patch.dict(os.environ, {"GOFLOW_API_KEY": "test-secret"}, clear=False):
+            with self.assertRaises(main.HTTPException) as invalid:
+                main.require_api_key("wrong-key")
+            self.assertEqual(invalid.exception.status_code, 401)
+            self.assertIsNone(main.require_api_key("test-secret"))
 
     def test_capabilities_report_real_local_tool_presence(self):
         capabilities = main.capabilities()
