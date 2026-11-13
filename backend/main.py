@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 APP_VERSION = "0.2.0"
 DATA_DIR = Path(os.getenv("GOFLOW_DATA_DIR", Path(__file__).parent / "data")).resolve()
@@ -84,6 +84,12 @@ app.add_middleware(
 class ClipRange(BaseModel):
     start_seconds: float = Field(ge=0)
     end_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "ClipRange":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
 
 
 class RenderRequest(BaseModel):
