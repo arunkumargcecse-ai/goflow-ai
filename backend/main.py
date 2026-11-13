@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 APP_VERSION = "0.2.0"
 DATA_DIR = Path(os.getenv("GOFLOW_DATA_DIR", Path(__file__).parent / "data")).resolve()
@@ -81,10 +81,22 @@ app.add_middleware(
 )
 
 
+class ClipRange(BaseModel):
+    start_seconds: float = Field(ge=0)
+    end_seconds: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_order(self) -> "ClipRange":
+        if self.end_seconds <= self.start_seconds:
+            raise ValueError("end_seconds must be greater than start_seconds")
+        return self
+
+
 class RenderRequest(BaseModel):
     media_id: str
     start_seconds: float = Field(default=0, ge=0)
     duration_seconds: float | None = Field(default=None, gt=0, le=3600)
+    clips: list[ClipRange] = Field(default_factory=list, max_length=100)
     output_width: int = Field(default=1080, ge=320, le=3840)
     output_height: int = Field(default=1920, ge=320, le=3840)
     preset: str = Field(default="balanced", pattern="^(fast|balanced|quality)$")
@@ -153,23 +165,58 @@ def run_render(job_id: str) -> None:
     update_job(job_id, status="processing", progress=5, error=None)
     try:
         command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
-        if request["start_seconds"] > 0:
-            command += ["-ss", str(request["start_seconds"])]
         command += ["-i", str(source)]
-        if request.get("duration_seconds") is not None:
-            command += ["-t", str(request["duration_seconds"])]
         preset = {"fast": "veryfast", "balanced": "medium", "quality": "slow"}[request["preset"]]
         width, height = request["output_width"], request["output_height"]
-        # Fit inside the requested canvas without stretching; pad to exact dimensions.
         video_filter = (
             f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1"
         )
+        clips = request.get("clips") or []
+        if clips:
+            # Detect audio once so silent source videos remain renderable.
+            audio_probe = subprocess.run(
+                [shutil.which("ffprobe") or "ffprobe", "-v", "error",
+                 "-select_streams", "a", "-show_entries", "stream=index",
+                 "-of", "json", str(source)],
+                capture_output=True, text=True, timeout=60, check=True,
+            )
+            has_audio = bool(json.loads(audio_probe.stdout).get("streams"))
+            filters = []
+            concat_inputs = []
+            for index, clip in enumerate(clips):
+                start, end = clip["start_seconds"], clip["end_seconds"]
+                filters.append(
+                    f"[0:v:0]trim=start={start}:end={end},setpts=PTS-STARTPTS,"
+                    f"{video_filter}[v{index}]"
+                )
+                concat_inputs.append(f"[v{index}]")
+                if has_audio:
+                    filters.append(
+                        f"[0:a:0]atrim=start={start}:end={end},asetpts=PTS-STARTPTS[a{index}]"
+                    )
+                    concat_inputs.append(f"[a{index}]")
+            audio_flag = 1 if has_audio else 0
+            filters.append(
+                "".join(concat_inputs) +
+                f"concat=n={len(clips)}:v=1:a={audio_flag}[vout]" +
+                ("[aout]" if has_audio else "")
+            )
+            command += [
+                "-filter_complex", ";".join(filters), "-map", "[vout]",
+            ]
+            if has_audio:
+                command += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
+        else:
+            if request["start_seconds"] > 0:
+                command += ["-ss", str(request["start_seconds"])]
+            if request.get("duration_seconds") is not None:
+                command += ["-t", str(request["duration_seconds"])]
+            command += ["-map", "0:v:0", "-map", "0:a?", "-vf", video_filter]
+            command += ["-c:a", "aac", "-b:a", "192k"]
         command += [
-            "-map", "0:v:0", "-map", "0:a?", "-vf", video_filter,
             "-c:v", "libx264", "-preset", preset, "-crf", "21",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
-            "-movflags", "+faststart", str(output),
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(output),
         ]
         update_job(job_id, progress=15)
         completed = subprocess.run(command, capture_output=True, text=True, timeout=4 * 60 * 60)
@@ -197,6 +244,7 @@ def capabilities():
         "story_planning": True,
         "storyboard": True,
         "timeline": True,
+        "multi_clip_rendering": True,
         "media_upload": True,
         "persistent_job_records": True,
         "ffmpeg_rendering": "available" if shutil.which("ffmpeg") else "not_installed",
@@ -255,12 +303,19 @@ def create_render_job(request: RenderRequest, background_tasks: BackgroundTasks,
         raise HTTPException(404, "Media not found. Upload a source video first.")
     if not (UPLOAD_DIR / media["stored_name"]).is_file():
         raise HTTPException(410, "Source media file is no longer available.")
-    if request.start_seconds and media["duration_seconds"] is not None:
-        if request.start_seconds >= media["duration_seconds"]:
-            raise HTTPException(422, "start_seconds must be shorter than the source video.")
-    if request.duration_seconds and media["duration_seconds"] is not None:
-        if request.start_seconds + request.duration_seconds > media["duration_seconds"] + 0.05:
-            raise HTTPException(422, "Requested render range exceeds the source duration.")
+    if request.clips:
+        for index, clip in enumerate(request.clips, start=1):
+            if clip.end_seconds <= clip.start_seconds:
+                raise HTTPException(422, f"Clip {index}: end_seconds must be greater than start_seconds.")
+            if media["duration_seconds"] is not None and clip.end_seconds > media["duration_seconds"] + 0.05:
+                raise HTTPException(422, f"Clip {index}: requested range exceeds the source duration.")
+    else:
+        if request.start_seconds and media["duration_seconds"] is not None:
+            if request.start_seconds >= media["duration_seconds"]:
+                raise HTTPException(422, "start_seconds must be shorter than the source video.")
+        if request.duration_seconds and media["duration_seconds"] is not None:
+            if request.start_seconds + request.duration_seconds > media["duration_seconds"] + 0.05:
+                raise HTTPException(422, "Requested render range exceeds the source duration.")
     job_id = uuid.uuid4().hex
     now = utc_now()
     with connect_db() as db:

@@ -2,12 +2,12 @@
 
 ## Implemented Studio workflow
 
-The Creator Studio now has a source-video upload, API-key entry, trim start/duration, render preset, job polling and authenticated MP4 download. The selected project aspect ratio determines the output canvas. The browser does not save the API key in project JSON or local autosave.
+The Creator Studio supports source-video upload, API-key entry, single-range trimming, editable per-shot source In/Out points, multi-clip sequence rendering, job polling and authenticated MP4 preview/download. Use **Map storyboard timings to source** after upload to assign each planned shot a sequential source range; adjust the In/Out values on each clip in the Visual editor timeline before rendering. The selected project aspect ratio determines the output canvas. The browser does not save the API key in project JSON or local autosave.
 
 ## API flow
 
 1. `POST /api/v1/media/upload` — multipart form field named `file`; requires `X-Goflow-Key`.
-2. `POST /api/v1/jobs/render` — JSON body with `media_id`, optional `start_seconds`, `duration_seconds`, output dimensions and preset; requires `X-Goflow-Key`.
+2. `POST /api/v1/jobs/render` — JSON body with `media_id`, output dimensions and preset; either use the legacy `start_seconds` / `duration_seconds` fields for one trim or provide `clips: [{start_seconds, end_seconds}, ...]` (up to 100 ordered ranges) for a concatenated edit; requires `X-Goflow-Key`. Multi-clip ranges are validated against the probed source duration and rendered in the submitted order.
 3. `GET /api/v1/jobs/{job_id}` — status and progress.
 4. `GET /api/v1/jobs/{job_id}/output` — completed MP4; requires `X-Goflow-Key`.
 
@@ -30,7 +30,7 @@ In the Studio's Quality & tools tab, set Backend URL to the deployed HTTPS servi
 - The job status endpoint uses unguessable UUIDs but is currently readable without a key; do not put sensitive source names in filenames.
 - This is a single-user starter API key, not full account authentication. Add rate limits, quotas, abuse monitoring and per-user access controls before broader public use.
 - The render endpoint currently uses FastAPI BackgroundTasks. Job records persist in SQLite, but execution is not yet a separately supervised durable worker; process restarts may leave queued/processing records needing recovery.
-- Keep source uploads separate from exports. This pipeline trims/re-encodes video; it is not generative video.
+- Keep source uploads separate from exports. This pipeline trims/re-encodes and concatenates selected source ranges; it is not generative video. Multi-clip rendering uses FFmpeg filter graphs and preserves source audio when an audio stream exists.
 
 ## Current boundaries
 
