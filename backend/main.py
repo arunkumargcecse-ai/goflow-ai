@@ -238,6 +238,7 @@ def capabilities():
         "story_planning": True,
         "storyboard": True,
         "timeline": True,
+        "multi_clip_rendering": True,
         "media_upload": True,
         "persistent_job_records": True,
         "ffmpeg_rendering": "available" if shutil.which("ffmpeg") else "not_installed",
