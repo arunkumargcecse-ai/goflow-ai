@@ -6,7 +6,6 @@ import shutil
 import sqlite3
 import subprocess
 import threading
-import time
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -95,6 +94,18 @@ def claim_next_job() -> str | None:
         return job_id if cursor.rowcount == 1 else None
 
 
+def recover_interrupted_jobs() -> int:
+    """Return jobs left processing by a stopped process to the durable queue."""
+    with connect_db() as db:
+        cursor = db.execute(
+            "UPDATE jobs SET status = 'queued', progress = 0, error = NULL, updated_at = ? "
+            "WHERE status = 'processing'",
+            (utc_now(),),
+        )
+        db.commit()
+        return cursor.rowcount
+
+
 def worker_loop() -> None:
     while not worker_stop.is_set():
         job_id = claim_next_job()
@@ -111,13 +122,7 @@ def worker_loop() -> None:
 async def lifespan(_app: FastAPI):
     global worker_thread
     # A process restart makes any in-flight render eligible for a clean retry.
-    with connect_db() as db:
-        db.execute(
-            "UPDATE jobs SET status = 'queued', progress = 0, error = NULL, updated_at = ? "
-            "WHERE status = 'processing'",
-            (utc_now(),),
-        )
-        db.commit()
+    recover_interrupted_jobs()
     worker_stop.clear()
     worker_thread = threading.Thread(target=worker_loop, name="goflow-render-worker", daemon=True)
     worker_thread.start()
