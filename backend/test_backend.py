@@ -41,6 +41,31 @@ class MediaEngineFoundationTests(unittest.TestCase):
         with self.assertRaises(Exception):
             main.RenderRequest(media_id="media-1", output_width=10000)
 
+    def test_render_request_accepts_ordered_source_clip_ranges(self):
+        request = main.RenderRequest(
+            media_id="media-1",
+            clips=[
+                {"start_seconds": 1.25, "end_seconds": 4.5},
+                {"start_seconds": 8, "end_seconds": 11},
+            ],
+        )
+        self.assertEqual(len(request.clips), 2)
+        self.assertEqual(request.clips[0].start_seconds, 1.25)
+        self.assertEqual(request.clips[1].end_seconds, 11)
+        with self.assertRaises(Exception):
+            main.RenderRequest(media_id="media-1", clips=[{"start_seconds": 5, "end_seconds": 2}])
+        with self.assertRaises(Exception):
+            main.RenderRequest(
+                media_id="media-1",
+                clips=[{"start_seconds": i, "end_seconds": i + 1} for i in range(101)],
+            )
+
+    def test_legacy_single_trim_request_remains_supported(self):
+        request = main.RenderRequest(media_id="media-1", start_seconds=2, duration_seconds=5)
+        self.assertEqual(request.clips, [])
+        self.assertEqual(request.start_seconds, 2)
+        self.assertEqual(request.duration_seconds, 5)
+
     def test_media_endpoints_require_configured_api_key(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(main.HTTPException) as missing:
