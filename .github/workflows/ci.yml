@@ -106,3 +106,24 @@ jobs:
           assert capabilities["timeline"] is True
           print("Root, health and capabilities endpoints passed")
           PY
+
+  backend-real-render-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install backend requirements
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Test real upload, multi-clip render and MP4 download
+        working-directory: backend
+        run: python smoke_render.py
+
