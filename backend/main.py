@@ -331,7 +331,7 @@ def create_render_job(request: RenderRequest, background_tasks: BackgroundTasks,
 
 
 @app.get("/api/v1/jobs/{job_id}")
-def job_status(job_id: str):
+def job_status(job_id: str, _authorized: None = Depends(require_api_key)):
     job = get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found.")
