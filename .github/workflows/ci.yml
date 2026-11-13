@@ -75,8 +75,8 @@ jobs:
       - name: Compile backend and run unit tests
         working-directory: backend
         run: |
-          python -m compileall -q main.py test_backend.py
-          python -m unittest -v test_backend
+          python -m compileall -q main.py studio_routes.py story_engine.py generation_providers.py test_backend.py test_studio_routes.py
+          python -m unittest -v test_backend test_studio_routes
       - name: Start API and smoke-test endpoints
         working-directory: backend
         run: |
