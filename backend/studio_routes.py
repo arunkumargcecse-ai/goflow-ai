@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
-from story_engine import StoryPlanRequest, create_story_plan
+from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 
 router = APIRouter()
 
@@ -58,7 +58,7 @@ class GenerationSubmission(BaseModel):
 @router.post("/story/plan")
 def create_story_plan(request: StoryPlanRequest):
     """Generate an editable offline-first story and storyboard plan."""
-    return create_story_plan(request)
+    return build_story_plan(request)
 
 
 @router.post("/generations", status_code=202)
