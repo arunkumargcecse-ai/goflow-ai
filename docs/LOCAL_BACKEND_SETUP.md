@@ -58,7 +58,8 @@ The named Docker volume `goflow_ai_data` stores uploads, rendered outputs and th
 - The API port is bound to `127.0.0.1`, not exposed to your LAN.
 - The browser Studio can call localhost from its configured origin. Do not change the bind address to `0.0.0.0` or expose this API publicly without adding proper authentication, rate limits and access controls.
 - The API key is stored only in the ignored local `.env` file and must also be entered into the Studio UI for media operations.
-- The current job runner uses FastAPI BackgroundTasks, not a durable worker queue. Avoid closing Docker or shutting down the laptop during a render.
+- Render requests are stored in SQLite and processed by a background worker thread. Queued jobs survive restarts, and jobs marked as processing are returned to the queue when the API starts again. A render interrupted mid-encoding is restarted from the beginning; partial output is not resumed.
+- Run one Uvicorn process for this local SQLite worker configuration. Do not start multiple API replicas against the same SQLite data directory.
 - This is a local single-user setup. The browser-based Studio must be open on the same computer that runs Docker.
 - Local rendering is limited by laptop CPU, RAM, thermal capacity and free disk space. Start with a short 10–20 second test clip.
 - Docker's first build downloads the Python base image and dependencies. No paid cloud resources are provisioned.

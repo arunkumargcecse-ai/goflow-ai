@@ -5,12 +5,14 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, model_validator
@@ -68,10 +70,75 @@ def init_db() -> None:
 
 init_db()
 
+worker_stop = threading.Event()
+worker_thread: threading.Thread | None = None
+
+
+def claim_next_job() -> str | None:
+    """Atomically claim the oldest queued job so only one worker runs it."""
+    with connect_db() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute(
+            "SELECT id FROM jobs WHERE status = 'queued' ORDER BY created_at, id LIMIT 1"
+        ).fetchone()
+        if not row:
+            db.commit()
+            return None
+        job_id = row["id"]
+        cursor = db.execute(
+            "UPDATE jobs SET status = 'processing', progress = 1, error = NULL, updated_at = ? "
+            "WHERE id = ? AND status = 'queued'",
+            (utc_now(), job_id),
+        )
+        db.commit()
+        return job_id if cursor.rowcount == 1 else None
+
+
+def recover_interrupted_jobs() -> int:
+    """Return jobs left processing by a stopped process to the durable queue."""
+    with connect_db() as db:
+        cursor = db.execute(
+            "UPDATE jobs SET status = 'queued', progress = 0, error = NULL, updated_at = ? "
+            "WHERE status = 'processing'",
+            (utc_now(),),
+        )
+        db.commit()
+        return cursor.rowcount
+
+
+def worker_loop() -> None:
+    while not worker_stop.is_set():
+        job_id = claim_next_job()
+        if job_id:
+            try:
+                run_render(job_id)
+            except Exception as exc:
+                update_job(job_id, status="failed", progress=0, error=str(exc)[:3000])
+        else:
+            worker_stop.wait(0.5)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    global worker_thread
+    # A process restart makes any in-flight render eligible for a clean retry.
+    recover_interrupted_jobs()
+    worker_stop.clear()
+    worker_thread = threading.Thread(target=worker_loop, name="goflow-render-worker", daemon=True)
+    worker_thread.start()
+    try:
+        yield
+    finally:
+        worker_stop.set()
+        if worker_thread:
+            worker_thread.join(timeout=5)
+
+
 app = FastAPI(
     title="goflow.ai API",
-    description="Video production orchestration API with a persistent local media queue",
+    description="Video production orchestration API with a persistent SQLite-backed render worker",
     version=APP_VERSION,
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -297,7 +364,7 @@ async def upload_media(file: UploadFile = File(...), _authorized: None = Depends
 
 
 @app.post("/api/v1/jobs/render", status_code=202)
-def create_render_job(request: RenderRequest, background_tasks: BackgroundTasks, _authorized: None = __import__('fastapi').Depends(require_api_key)):
+def create_render_job(request: RenderRequest, _authorized: None = Depends(require_api_key)):
     media = get_media(request.media_id)
     if not media:
         raise HTTPException(404, "Media not found. Upload a source video first.")
@@ -326,7 +393,6 @@ def create_render_job(request: RenderRequest, background_tasks: BackgroundTasks,
             (job_id, request.media_id, request.model_dump_json(), now, now),
         )
         db.commit()
-    background_tasks.add_task(run_render, job_id)
     return {"job_id": job_id, "status": "queued", "status_url": f"/api/v1/jobs/{job_id}"}
 
 
