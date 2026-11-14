@@ -146,6 +146,22 @@ def main() -> None:
                 # MP4 files commonly begin with an ftyp box at byte offset 4.
                 if status != 200 or rendered[4:8] != b"ftyp":
                     raise AssertionError(f"Output download failed or is not MP4 (HTTP {status})")
+            quality_status, _, quality_body = request(
+                base + f"/api/v1/jobs/{job_id}/quality",
+            )
+            if quality_status != 401:
+                raise AssertionError(f"Unauthenticated quality check expected 401, got {quality_status}")
+            quality_status, _, quality_body = request(
+                base + f"/api/v1/jobs/{job_id}/quality",
+                headers={"X-Goflow-Key": api_key},
+            )
+            if quality_status != 200:
+                raise AssertionError(f"Quality check failed ({quality_status}): {quality_body.decode(errors='replace')}")
+            quality = json.loads(quality_body)
+            if not quality["passed"] or quality["width"] != 320 or quality["height"] != 320:
+                raise AssertionError(f"Unexpected quality report: {quality}")
+            if not quality["checks"] or not all(c["passed"] for c in quality["checks"] if c["required"]):
+                raise AssertionError(f"Required quality gates did not pass: {quality}")
             output = root / "rendered.mp4"
             output.write_bytes(rendered)
             probe = subprocess.run(
@@ -156,7 +172,7 @@ def main() -> None:
             duration = float(json.loads(probe.stdout)["format"]["duration"])
             if not 1.5 <= duration <= 2.5:
                 raise AssertionError(f"Unexpected rendered duration: {duration}")
-            print(f"PASS: upload, API-key enforcement, two-clip FFmpeg render and MP4 download ({duration:.2f}s)")
+            print(f"PASS: upload, API-key enforcement, two-clip FFmpeg render, MP4 download and technical QC ({duration:.2f}s)")
         finally:
             server.terminate()
             try:
