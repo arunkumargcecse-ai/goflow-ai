@@ -29,6 +29,7 @@ from local_tts import available_engines as local_tts_engines, synthesize_speech
 from reference_video import ReferenceVideoError, inspect_reference_video
 from reference_analysis import ReferenceAnalysisError, analyze_reference_video
 from character_engine import build_shot_prompt
+from wan_workflow_export import WanWorkflowExportError, build_wan_animate_ui_workflow
 
 router = APIRouter()
 
@@ -857,3 +858,73 @@ def build_reference_shot_prompts(map_id: str):
         "prompts": output,
         "execution_note": "Prompts are assembled locally. No image/video inference or motion transfer was run.",
     }
+
+
+@router.post("/studio/reference-videos/shot-maps/{map_id}/shots/{shot_index}/export-wan-workflow")
+def export_wan_animate_shot_workflow(map_id: str, shot_index: int):
+    """Export an editable ComfyUI canvas workflow for one shot; does not run inference."""
+    if not re.fullmatch(r"[a-f0-9]{32}", map_id):
+        raise HTTPException(422, "Invalid shot map id.")
+    if shot_index < 1 or shot_index > 12:
+        raise HTTPException(422, "Shot index must be between 1 and 12.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute(
+            "SELECT map_json FROM studio_reference_shot_maps WHERE id = ?", (map_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Reference shot map not found.")
+    shot_map = json.loads(row["map_json"])
+    shots = shot_map.get("shots", [])
+    if shot_index > len(shots):
+        raise HTTPException(404, "Shot index is outside this shot map.")
+    shot = shots[shot_index - 1]
+    reference = _studio_media_record(shot_map["reference_media_id"])
+    if reference["media_type"] != "video":
+        raise HTTPException(422, "Shot map reference must be a video.")
+
+    character_media_id = shot.get("character_media_id")
+    character = None
+    if shot.get("character_id"):
+        with _connect() as db:
+            profile_row = db.execute(
+                "SELECT profile_json FROM studio_characters WHERE id = ?",
+                (shot["character_id"],),
+            ).fetchone()
+        if not profile_row:
+            raise HTTPException(422, "Assigned character bible no longer exists.")
+        profile = json.loads(profile_row["profile_json"])
+        if not character_media_id and profile.get("reference_media_ids"):
+            character_media_id = profile["reference_media_ids"][0]
+        character = profile
+    if not character_media_id:
+        raise HTTPException(422, "Assign a character reference image before exporting this shot.")
+    image = _studio_media_record(character_media_id)
+    if image["media_type"] != "image":
+        raise HTTPException(422, "Assigned character reference must be an image.")
+
+    prompt = build_shot_prompt(shot, character)
+    try:
+        video_upload = comfy_upload_video(
+            reference["filename"], reference["content_type"], Path(reference["path"]).read_bytes()
+        )
+        image_upload = comfy_upload_image(
+            image["filename"], image["content_type"], Path(image["path"]).read_bytes()
+        )
+        template_path = Path(__file__).parent / "workflows" / "wan2-2-animate" / "video_wan2_2_14B_animate.json"
+        workflow = build_wan_animate_ui_workflow(
+            template_path, video_upload["video_ref"], image_upload["image_ref"], prompt
+        )
+    except (ComfyUIError, WanWorkflowExportError, OSError, ValueError) as exc:
+        raise HTTPException(503 if isinstance(exc, ComfyUIError) else 422, str(exc)) from exc
+
+    export_dir = (_studio_output_dir() / "wan-workflow-exports").resolve()
+    export_dir.mkdir(parents=True, exist_ok=True)
+    output_path = (export_dir / f"{map_id}-shot-{shot_index:02d}.json").resolve()
+    if output_path.parent != export_dir:
+        raise HTTPException(422, "Invalid workflow export path.")
+    output_path.write_text(json.dumps(workflow, ensure_ascii=False, indent=2), encoding="utf-8")
+    return FileResponse(
+        output_path, media_type="application/json",
+        filename=f"goflow-wan-animate-shot-{shot_index:02d}.json",
+    )
