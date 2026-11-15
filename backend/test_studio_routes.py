@@ -106,6 +106,30 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual({item["category"] for item in response.json()["workflows"]}, {"video"})
 
+    @patch("studio_routes.get_workflow_form")
+    def test_local_workflow_form_returns_manifest_fields(self, get_form):
+        get_form.return_value = {"id": "sample-image", "inputs": [{"id": "prompt"}], "ready": True}
+        response = self.client.get("/api/v1/studio/workflows/sample-image", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["inputs"][0]["id"], "prompt")
+
+    @patch("studio_routes.comfy_submit")
+    @patch("studio_routes.build_workflow_prompt")
+    def test_local_workflow_run_builds_and_submits_registered_graph(self, build_prompt, submit):
+        build_prompt.return_value = (
+            {"1": {"class_type": "SaveImage", "inputs": {}}},
+            {"id": "sample-image", "name": "Sample image"},
+        )
+        submit.return_value = {"prompt_id": "local-prompt-1"}
+        response = self.client.post(
+            "/api/v1/studio/workflows/sample-image/run",
+            headers=self.headers,
+            json={"values": {"prompt": "A rainy street"}},
+        )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["prompt_id"], "local-prompt-1")
+        build_prompt.assert_called_once_with("sample-image", {"prompt": "A rainy street"})
+
     def test_provider_capabilities_never_claim_mock_media_is_real(self):
         response = self.client.get("/api/v1/studio/providers", headers=self.headers)
         self.assertEqual(response.status_code, 200)
