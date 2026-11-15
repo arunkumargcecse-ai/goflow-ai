@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
-from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image
+from comfyui_client import ComfyUIError, download_output as comfy_download_output, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
@@ -48,6 +49,14 @@ def init_studio_db() -> None:
                 media_type TEXT NOT NULL, provider TEXT NOT NULL, status TEXT NOT NULL,
                 request_json TEXT NOT NULL, result_json TEXT NOT NULL,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+        """)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS studio_media (
+                id TEXT PRIMARY KEY, filename TEXT NOT NULL, stored_name TEXT NOT NULL,
+                media_type TEXT NOT NULL, content_type TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL, source_prompt_id TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
         db.commit()
@@ -218,6 +227,81 @@ def submit_comfy_workflow(payload: ComfyWorkflowSubmission):
             "estimated_cost": "₹0 from goflow.ai; local hardware only (worker electricity/network costs may apply)"}
 
 
+def _studio_output_dir() -> Path:
+    path = Path(os.getenv("GOFLOW_DATA_DIR", Path(__file__).parent / "data")).resolve() / "studio_outputs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _import_comfy_outputs(prompt_id: str, outputs: dict) -> list[dict]:
+    allowed = {
+        ".png": ("image", "image/png"), ".jpg": ("image", "image/jpeg"),
+        ".jpeg": ("image", "image/jpeg"), ".webp": ("image", "image/webp"),
+        ".mp4": ("video", "video/mp4"), ".webm": ("video", "video/webm"),
+        ".gif": ("image", "image/gif"), ".wav": ("audio", "audio/wav"),
+        ".mp3": ("audio", "audio/mpeg"),
+    }
+    imported = []
+    for node_outputs in outputs.values():
+        if not isinstance(node_outputs, dict):
+            continue
+        for group in ("images", "gifs", "videos", "audio"):
+            items = node_outputs.get(group, [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                filename = item.get("filename")
+                extension = Path(filename).suffix.lower() if isinstance(filename, str) else ""
+                if extension not in allowed:
+                    continue
+                media_type, expected_type = allowed[extension]
+                subfolder = item.get("subfolder", "")
+                output_type = item.get("type", "output")
+                data, content_type = comfy_download_output(filename, subfolder, output_type)
+                if not data or len(data) > 500 * 1024 * 1024:
+                    raise ComfyUIError("ComfyUI returned an empty or oversized output.")
+                # Do not trust an upstream content-type header over the known file extension.
+                media_id = uuid.uuid4().hex
+                stored_name = media_id + extension
+                destination = _studio_output_dir() / stored_name
+                destination.write_bytes(data)
+                now = _now()
+                try:
+                    with _connect() as db:
+                        db.execute(
+                            """INSERT INTO studio_media
+                            (id, filename, stored_name, media_type, content_type, size_bytes, source_prompt_id, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (media_id, filename, stored_name, media_type, expected_type, len(data), prompt_id, now),
+                        )
+                        db.commit()
+                except Exception:
+                    destination.unlink(missing_ok=True)
+                    raise
+                imported.append({
+                    "media_id": media_id, "filename": filename, "media_type": media_type,
+                    "size_bytes": len(data), "url": f"/api/v1/studio/media/{media_id}",
+                })
+    return imported
+
+
+@router.get("/studio/media/{media_id}")
+def get_studio_media(media_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", media_id):
+        raise HTTPException(422, "Invalid media id.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute("SELECT * FROM studio_media WHERE id = ?", (media_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Generated media not found.")
+    path = _studio_output_dir() / row["stored_name"]
+    if not path.is_file():
+        raise HTTPException(410, "Generated media file is no longer available.")
+    return FileResponse(path, media_type=row["content_type"], filename=row["filename"])
+
+
 @router.get("/studio/comfy/jobs/{prompt_id}")
 def comfy_job_status(prompt_id: str):
     try:
@@ -228,5 +312,12 @@ def comfy_job_status(prompt_id: str):
     if not record:
         return {"prompt_id": prompt_id, "status": "queued_or_running", "history": None}
     execution = record.get("status", {})
+    outputs = record.get("outputs", {})
+    imported = []
+    if execution.get("completed") and isinstance(outputs, dict):
+        try:
+            imported = _import_comfy_outputs(prompt_id, outputs)
+        except (ComfyUIError, ValueError) as exc:
+            raise HTTPException(502, str(exc)) from exc
     return {"prompt_id": prompt_id, "status": "completed" if execution.get("completed") else "processing_or_failed",
-            "execution_status": execution, "outputs": record.get("outputs", {})}
+            "execution_status": execution, "outputs": outputs, "imported_media": imported}
