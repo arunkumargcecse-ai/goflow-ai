@@ -282,6 +282,22 @@ async def upload_comfy_reference_video(file: UploadFile = File(...)):
     return {"provider": "comfyui", **uploaded}
 
 
+class ReferenceShot(BaseModel):
+    analysis_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    frame_filename: str = Field(pattern=r"^frame-[0-9]{2}\\.jpg$")
+    timestamp_seconds: float = Field(ge=0, le=180)
+    title: str = Field(default="Shot", min_length=1, max_length=120)
+    duration_seconds: float = Field(default=3, gt=0, le=60)
+    camera_direction: str = Field(default="Static", max_length=160)
+    visual_notes: str = Field(default="", max_length=1000)
+    generation_prompt: str = Field(default="", max_length=2000)
+    character_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+
+
+class ReferenceShotMapRequest(BaseModel):
+    shots: list[ReferenceShot] = Field(min_length=1, max_length=12)
+
+
 @router.post("/studio/reference-videos/{media_id}/shot-map", status_code=201)
 def save_reference_shot_map(media_id: str, payload: ReferenceShotMapRequest):
     """Persist an editable shot-by-shot recreation plan for an inspected video."""
@@ -294,7 +310,7 @@ def save_reference_shot_map(media_id: str, payload: ReferenceShotMapRequest):
             raise HTTPException(404, "Reference video not found.")
         analysis_root = (_studio_output_dir() / "reference-analysis").resolve()
         for shot in payload.shots:
-            frame_path = analysis_root / shot.frame_filename
+            frame_path = analysis_root / shot.analysis_id / shot.frame_filename
             if not frame_path.is_file() or analysis_root not in frame_path.resolve().parents:
                 raise HTTPException(422, f"Reference frame {shot.frame_filename} does not exist.")
             if shot.character_media_id:
@@ -323,21 +339,6 @@ def get_reference_shot_map(map_id: str):
     if not row:
         raise HTTPException(404, "Reference shot map not found.")
     return json.loads(row["map_json"])
-
-
-class ReferenceShot(BaseModel):
-    frame_filename: str = Field(pattern=r"^frame-[0-9]{2}\\.jpg$")
-    timestamp_seconds: float = Field(ge=0, le=180)
-    title: str = Field(default="Shot", min_length=1, max_length=120)
-    duration_seconds: float = Field(default=3, gt=0, le=60)
-    camera_direction: str = Field(default="Static", max_length=160)
-    visual_notes: str = Field(default="", max_length=1000)
-    generation_prompt: str = Field(default="", max_length=2000)
-    character_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
-
-
-class ReferenceShotMapRequest(BaseModel):
-    shots: list[ReferenceShot] = Field(min_length=1, max_length=12)
 
 
 @router.post("/studio/reference-videos/{media_id}/analyze")
