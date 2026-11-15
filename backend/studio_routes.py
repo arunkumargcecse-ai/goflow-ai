@@ -28,6 +28,7 @@ from studio_composer import compose_video
 from local_tts import available_engines as local_tts_engines, synthesize_speech
 from reference_video import ReferenceVideoError, inspect_reference_video
 from reference_analysis import ReferenceAnalysisError, analyze_reference_video
+from character_engine import build_shot_prompt
 
 router = APIRouter()
 
@@ -66,6 +67,7 @@ def init_studio_db() -> None:
             )
         """)
         db.execute("CREATE TABLE IF NOT EXISTS studio_reference_shot_maps (id TEXT PRIMARY KEY, reference_media_id TEXT NOT NULL, map_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS studio_characters (id TEXT PRIMARY KEY, name TEXT NOT NULL, profile_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS studio_renders (id TEXT PRIMARY KEY, status TEXT NOT NULL, progress INTEGER NOT NULL, request_json TEXT NOT NULL, output_name TEXT, result_json TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         db.commit()
 
@@ -292,6 +294,7 @@ class ReferenceShot(BaseModel):
     visual_notes: str = Field(default="", max_length=1000)
     generation_prompt: str = Field(default="", max_length=2000)
     character_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    character_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
 class ReferenceShotMapRequest(BaseModel):
@@ -723,3 +726,134 @@ def comfy_job_status(prompt_id: str):
             raise HTTPException(502, str(exc)) from exc
     return {"prompt_id": prompt_id, "status": "completed" if execution.get("completed") else "processing_or_failed",
             "execution_status": execution, "outputs": outputs, "imported_media": imported}
+
+
+class CharacterProfileRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    identity: str = Field(min_length=1, max_length=1200)
+    appearance: str = Field(default="", max_length=1600)
+    wardrobe: str = Field(default="", max_length=1000)
+    continuity_rules: list[str] = Field(default_factory=list, max_length=12)
+    negative_guidance: str = Field(default="", max_length=1000)
+    reference_media_ids: list[str] = Field(default_factory=list, max_length=8)
+
+    @field_validator("continuity_rules")
+    @classmethod
+    def validate_rules(cls, value):
+        if any(not isinstance(item, str) or not item.strip() or len(item) > 240 for item in value):
+            raise ValueError("Each continuity rule must contain 1–240 characters.")
+        return [item.strip() for item in value]
+
+    @field_validator("reference_media_ids")
+    @classmethod
+    def validate_reference_ids(cls, value):
+        if len(set(value)) != len(value) or any(not re.fullmatch(r"[a-f0-9]{32}", item) for item in value):
+            raise ValueError("Reference media IDs must be unique valid Studio media IDs.")
+        return value
+
+
+@router.get("/studio/characters")
+def list_studio_characters():
+    """List saved character bibles and their locally stored reference images."""
+    init_studio_db()
+    with _connect() as db:
+        rows = db.execute(
+            "SELECT id, profile_json, created_at, updated_at FROM studio_characters ORDER BY updated_at DESC"
+        ).fetchall()
+    return {"items": [
+        {"character_id": row["id"], **json.loads(row["profile_json"]),
+         "created_at": row["created_at"], "updated_at": row["updated_at"]}
+        for row in rows
+    ]}
+
+
+@router.post("/studio/characters", status_code=201)
+def create_studio_character(payload: CharacterProfileRequest):
+    """Save a reusable character bible; image references must already be in Studio media."""
+    init_studio_db()
+    with _connect() as db:
+        for media_id in payload.reference_media_ids:
+            row = db.execute(
+                "SELECT media_type FROM studio_media WHERE id = ?", (media_id,)
+            ).fetchone()
+            if not row or row["media_type"] != "image":
+                raise HTTPException(422, "Every character reference must be an imported Studio image.")
+        character_id = uuid.uuid4().hex
+        now = _now()
+        profile = payload.model_dump()
+        db.execute(
+            "INSERT INTO studio_characters (id, name, profile_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (character_id, payload.name, json.dumps(profile), now, now),
+        )
+        db.commit()
+    return {"character_id": character_id, **profile, "created_at": now, "updated_at": now}
+
+
+@router.get("/studio/characters/{character_id}")
+def get_studio_character(character_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", character_id):
+        raise HTTPException(422, "Invalid character ID.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute(
+            "SELECT id, profile_json, created_at, updated_at FROM studio_characters WHERE id = ?",
+            (character_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Character profile not found.")
+    return {"character_id": row["id"], **json.loads(row["profile_json"]),
+            "created_at": row["created_at"], "updated_at": row["updated_at"]}
+
+
+@router.post("/studio/reference-videos/shot-maps/{map_id}/build-prompts")
+def build_reference_shot_prompts(map_id: str):
+    """Assemble deterministic per-shot prompts from shot notes and assigned character bibles."""
+    if not re.fullmatch(r"[a-f0-9]{32}", map_id):
+        raise HTTPException(422, "Invalid shot map ID.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute(
+            "SELECT map_json FROM studio_reference_shot_maps WHERE id = ?", (map_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Reference shot map not found.")
+        shot_map = json.loads(row["map_json"])
+        output = []
+        for shot in shot_map.get("shots", []):
+            character = None
+            character_id = shot.get("character_media_id")
+            # Existing shot-map assignments point to image media. Resolve the image and
+            # use it as a visual reference; character-bible metadata is selected separately
+            # by matching an optional character_id field in newer shot maps.
+            if shot.get("character_id"):
+                profile_row = db.execute(
+                    "SELECT id, profile_json FROM studio_characters WHERE id = ?",
+                    (shot["character_id"],),
+                ).fetchone()
+                if not profile_row:
+                    raise HTTPException(422, f"Character profile {shot['character_id']} no longer exists.")
+                character = json.loads(profile_row["profile_json"])
+                character_id = profile_row["id"]
+            if character is None and character_id:
+                media_row = db.execute(
+                    "SELECT filename FROM studio_media WHERE id = ? AND media_type = 'image'",
+                    (character_id,),
+                ).fetchone()
+                if not media_row:
+                    raise HTTPException(422, "Assigned character reference image no longer exists.")
+            prompt = build_shot_prompt(shot, character)
+            output.append({
+                "shot_index": len(output) + 1,
+                "timestamp_seconds": shot.get("timestamp_seconds", 0),
+                "duration_seconds": shot.get("duration_seconds", 3),
+                "character_id": character_id if character else shot.get("character_id"),
+                "character_reference_media_id": shot.get("character_media_id"),
+                "generation_prompt": prompt,
+                "motion_transfer_status": "prompt_ready_only",
+            })
+    return {
+        "map_id": map_id,
+        "prompt_count": len(output),
+        "prompts": output,
+        "execution_note": "Prompts are assembled locally. No image/video inference or motion transfer was run.",
+    }
