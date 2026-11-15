@@ -54,3 +54,35 @@ def get_queue() -> dict[str, Any]:
             return response.json()
     except httpx.HTTPError as exc:
         raise ComfyUIError(f"Could not read ComfyUI queue: {exc}") from exc
+
+
+def upload_image(filename: str, content_type: str, data: bytes) -> dict[str, str]:
+    """Upload a validated image to the configured local ComfyUI input directory."""
+    allowed = {"image/png", "image/jpeg", "image/webp"}
+    if content_type not in allowed:
+        raise ValueError("Only PNG, JPEG, and WebP reference images are supported.")
+    if not data or len(data) > 20 * 1024 * 1024:
+        raise ValueError("Reference image must be between 1 byte and 20 MB.")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename.rsplit("/", 1)[-1].rsplit("\\\\", 1)[-1])[:120]
+    if not safe_name or safe_name in {".", ".."}:
+        raise ValueError("Invalid reference image filename.")
+    try:
+        with _client() as client:
+            response = client.post(
+                f"{base_url()}/upload/image",
+                files={"image": (safe_name, data, content_type)},
+                data={"type": "input", "overwrite": "false"},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except httpx.HTTPError as exc:
+        raise ComfyUIError(f"Could not upload reference image to ComfyUI: {exc}") from exc
+    name, subfolder = result.get("name"), result.get("subfolder", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", name):
+        raise ComfyUIError("ComfyUI returned an invalid uploaded image name.")
+    if not isinstance(subfolder, str) or (subfolder and not re.fullmatch(r"[A-Za-z0-9_./-]{1,160}", subfolder)):
+        raise ComfyUIError("ComfyUI returned an invalid image subfolder.")
+    image_ref = f"{subfolder}/{name}" if subfolder else name
+    if ".." in image_ref.split("/"):
+        raise ComfyUIError("ComfyUI returned an unsafe image path.")
+    return {"image_ref": image_ref, "name": name, "subfolder": subfolder, "type": result.get("type", "input")}
