@@ -315,7 +315,7 @@ def analyze_stored_reference_video(media_id: str):
 
 @router.get("/studio/reference-videos/analysis/{analysis_id}/{filename}")
 def get_reference_analysis_frame(analysis_id: str, filename: str):
-    if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\\.jpg", filename):
+    if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\.jpg", filename):
         raise HTTPException(422, "Invalid analysis frame path.")
     path = (_studio_output_dir() / "reference-analysis" / analysis_id / filename).resolve()
     root = (_studio_output_dir() / "reference-analysis").resolve()
