@@ -47,7 +47,7 @@ label{color:#c5baff;font-size:11px;letter-spacing:.06em;text-transform:uppercase
  </div>
  <div class="card inspector-card"><h2>Shot inspector</h2><p class="muted">Select a storyboard card or timeline clip to inspect its details.</p><div class="inspector-empty" id="inspectorEmpty">Choose a shot to view its camera, duration and prompt.</div><div id="shotInspector" class="hide"><label>Shot description</label><p id="inspectorDescription"></p><label>Camera direction</label><p id="inspectorCamera"></p><label>Generation prompt</label><p id="inspectorPrompt"></p><label>Continuity notes</label><p id="inspectorContinuity"></p><label>Duration</label><p id="inspectorDuration"></p><button class="btn" id="editSelectedShot">Edit in Storyboard</button></div></div>
 </div>
-<div class="card"><div class="editor-heading"><div><h2>Generated media library</h2><p class="muted">Load completed local ComfyUI outputs, preview them, and attach one to the selected storyboard shot.</p></div><div class="actions"><button class="btn" id="refreshStudioMedia">Refresh assets</button><button class="btn primary" id="renderStudioTimeline">Render MP4</button></div></div><div class="row"><div><label for="studioAudioTrack">Optional audio bed</label><select id="studioAudioTrack"><option value="">No audio track</option></select></div><div><label for="studioRenderPreset">Render quality</label><select id="studioRenderPreset"><option value="veryfast" selected>Fast 720p preview (recommended)</option><option value="medium">Balanced</option><option value="slow">Cinematic quality (slow)</option></select></div></div><p class="muted" id="studioMediaStatus">Connect your backend and load generated assets.</p><p class="muted" id="studioRenderStatus">Attach media to every shot, then render your sequence.</p><a class="btn hide" id="studioRenderDownload" href="#" download>Download rendered MP4</a><div id="studioMediaItems" class="list"></div></div>
+<div class="card"><div class="editor-heading"><div><h2>Generated media library</h2><p class="muted">Load completed local ComfyUI outputs, preview them, and attach one to the selected storyboard shot.</p></div><div class="actions"><button class="btn" id="refreshStudioMedia">Refresh assets</button><button class="btn primary" id="renderStudioTimeline">Render MP4</button></div></div><div class="card" style="margin:16px 0"><h3>Local Tamil voiceover</h3><p class="muted">Generate narration on your own backend using an installed local Tamil voice. No cloud TTS calls.</p><label for="voiceoverText">Narration script</label><textarea id="voiceoverText" maxlength="5000" placeholder="இரவு பன்னிரண்டு மணி. அந்த தொலைபேசி மீண்டும் ஒலித்தது..."></textarea><div class="row"><div><label for="voiceoverEngine">Speech engine</label><select id="voiceoverEngine"><option value="auto">Auto (Piper first)</option><option value="piper">Piper local model</option><option value="espeak">eSpeak Tamil</option></select></div><div><label for="voiceoverVoice">Voice ID</label><input id="voiceoverVoice" value="ta" maxlength="80"></div><div><label for="voiceoverSpeed">Speech speed</label><input id="voiceoverSpeed" type="number" min="80" max="250" value="145"></div></div><button class="btn primary" id="generateVoiceover">Generate local voiceover</button><p class="muted" id="voiceoverStatus">Requires a locally installed Tamil TTS engine and voice model.</p></div><div class="row"><div><label for="studioVoiceTrack">Narration track</label><select id="studioVoiceTrack"><option value="">No narration</option></select></div><div><label for="studioAudioTrack">Background music / audio bed</label><select id="studioAudioTrack"><option value="">No audio bed</option></select></div><div><label for="studioRenderPreset">Render quality</label><select id="studioRenderPreset"><option value="veryfast" selected>Fast 720p preview (recommended)</option><option value="medium">Balanced</option><option value="slow">Cinematic quality (slow)</option></select></div></div><p class="muted" id="studioMediaStatus">Connect your backend and load generated assets.</p><p class="muted" id="studioRenderStatus">Attach media to every shot, then render your sequence.</p><a class="btn hide" id="studioRenderDownload" href="#" download>Download rendered MP4</a><div id="studioMediaItems" class="list"></div></div>
 <div class="card"><div class="editor-heading"><div><h2>Storyboard frames</h2><p class="muted">Select a frame to preview it. Drag cards to reorder your sequence.</p></div><button class="btn primary" id="editorAddShot">＋ Add shot</button></div><div id="visualStoryboard" class="visual-storyboard"></div></div>
 <div class="card"><div class="editor-heading"><div><h2>Interactive timeline</h2><p class="muted">Drag clips left or right to change shot order. Timing follows each storyboard shot.</p></div><span class="pill" id="visualTimelineDuration">0 SEC</span></div><div class="timeline-ruler"><span>00:00</span><span>SHOT SEQUENCE</span><span id="timelineEndLabel">00:00</span></div><div id="visualTimeline" class="visual-timeline"></div><p class="notice">This workspace edits the storyboard plan and timing order. It does not yet display source-video frames or perform frame-accurate trimming.</p></div>
 </section>
@@ -87,7 +87,11 @@ async function refreshStudioMedia(){
   root.innerHTML=studioMediaCache.map((item,i)=>'<div class="item"><div><b>'+escapeHtml(item.filename)+'</b><div class="muted">'+escapeHtml(item.media_type)+' · '+Math.round(item.size_bytes/1024)+' KB</div></div><div class="actions"><button class="btn" data-preview-media="'+i+'">Preview</button><button class="btn primary" data-attach-media="'+i+'">Attach to selected shot</button></div></div>').join('')||'<p class="muted">No generated assets found yet. Complete a local ComfyUI job first.</p>';
   root.querySelectorAll('[data-preview-media]').forEach(b=>b.onclick=()=>previewStudioMedia(studioMediaCache[Number(b.dataset.previewMedia)]));
   root.querySelectorAll('[data-attach-media]').forEach(b=>b.onclick=()=>attachStudioMedia(studioMediaCache[Number(b.dataset.attachMedia)]));
-  const audio=$('studioAudioTrack');if(audio){audio.innerHTML='<option value="">No audio track</option>'+studioMediaCache.filter(x=>x.media_type==='audio').map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.filename)+'</option>').join('')}status.textContent=studioMediaCache.length+' generated asset(s) available in local Studio storage.';
+  const audioOptions=studioMediaCache.filter(x=>x.media_type==='audio').map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.filename)+'</option>').join('');
+  const audio=$('studioAudioTrack'),voice=$('studioVoiceTrack');
+  if(audio)audio.innerHTML='<option value="">No audio bed</option>'+audioOptions;
+  if(voice)voice.innerHTML='<option value="">No narration</option>'+audioOptions;
+  status.textContent=studioMediaCache.length+' generated asset(s) available in local Studio storage.';
  }catch(e){status.textContent='Could not load generated assets: '+e.message}
  finally{if(button)button.disabled=false}
 }
@@ -111,6 +115,21 @@ function attachStudioMedia(item){
  previewStudioMedia(item);
 }
 
+$('generateVoiceover').onclick=async()=>{
+ const button=$('generateVoiceover'),status=$('voiceoverStatus'),text=$('voiceoverText').value.trim();
+ if(!text){status.textContent='Enter a narration script first.';return}
+ button.disabled=true;status.textContent='Synthesizing speech locally…';
+ try{
+  const result=await studioApi('/studio/voiceovers',{method:'POST',body:JSON.stringify({
+   text,engine:$('voiceoverEngine').value,voice:$('voiceoverVoice').value.trim(),
+   speed:Number($('voiceoverSpeed').value)||145
+  })});
+  await refreshStudioMedia();
+  $('studioVoiceTrack').value=result.media_id;
+  status.textContent='Voiceover created · '+result.engine+' · '+Math.round(result.size_bytes/1024)+' KB. Selected as narration track.';
+ }catch(e){status.textContent='Voiceover failed: '+e.message}
+ finally{button.disabled=false}
+};
 $('renderStudioTimeline').onclick=renderStudioTimeline;
 let activeStudioRender=null;
 async function renderStudioTimeline(){
@@ -120,7 +139,11 @@ async function renderStudioTimeline(){
  if(clips.length!==scenes.length){status.textContent='Attach a generated image or video to every storyboard shot before rendering.';return}
  const payload={
   clips:clips.map(({scene,asset})=>({media_id:asset.id,duration:Number(scene.duration)||5,source_in:Number(scene.sourceIn)||0,source_out:scene.sourceOut==null||scene.sourceOut===''?null:Number(scene.sourceOut),motion:scene.motion||'zoom_in'})),
-  audio_media_id:$('studioAudioTrack').value||null,
+  audio_media_id:null,
+  audio_tracks:[
+   $('studioVoiceTrack').value?{media_id:$('studioVoiceTrack').value,start_seconds:0,volume:1,loop:false}:null,
+   $('studioAudioTrack').value?{media_id:$('studioAudioTrack').value,start_seconds:0,volume:0.18,loop:true}:null
+  ].filter(Boolean),
   width:720,height:1280,preset:$('studioRenderPreset').value,crf:22
  };
  button.disabled=true;$('studioRenderDownload').classList.add('hide');status.textContent='Submitting local FFmpeg composition…';
