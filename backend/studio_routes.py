@@ -372,9 +372,17 @@ class CompositionClip(BaseModel):
     motion: Literal["static", "zoom_in", "zoom_out", "pan_left", "pan_right"] = "zoom_in"
 
 
+class AudioTrack(BaseModel):
+    media_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    start_seconds: float = Field(default=0, ge=0, le=3600)
+    volume: float = Field(default=1.0, ge=0, le=2)
+    loop: bool = False
+
+
 class StudioCompositionRequest(BaseModel):
     clips: list[CompositionClip] = Field(min_length=1, max_length=100)
     audio_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    audio_tracks: list[AudioTrack] = Field(default_factory=list, max_length=20)
     width: int = Field(default=1080, ge=320, le=3840)
     height: int = Field(default=1920, ge=320, le=3840)
     preset: Literal["veryfast", "medium", "slow", "veryslow"] = "slow"
@@ -417,11 +425,18 @@ def _run_studio_composition(render_id: str, payload: dict) -> None:
             if audio["media_type"] != "audio":
                 raise ValueError("The optional soundtrack must be an audio asset.")
             audio_path = audio["path"]
+        audio_tracks = []
+        for track in payload.get("audio_tracks", []):
+            asset = _studio_media_record(track["media_id"])
+            if asset["media_type"] != "audio":
+                raise ValueError("Every audio track must reference an audio asset.")
+            audio_tracks.append({"path": asset["path"], "start_seconds": track["start_seconds"],
+                                 "volume": track["volume"], "loop": track["loop"]})
         with _connect() as db:
             db.execute("UPDATE studio_renders SET status='processing', progress=10, updated_at=? WHERE id=?", (_now(), render_id))
             db.commit()
         result = compose_video(resolved, audio_path, output_path, width=payload["width"], height=payload["height"],
-                               preset=payload["preset"], crf=payload["crf"])
+                               preset=payload["preset"], crf=payload["crf"], audio_tracks=audio_tracks)
         with _connect() as db:
             db.execute("UPDATE studio_renders SET status='completed', progress=100, output_name=?, result_json=?, updated_at=? WHERE id=?",
                        (output_name, json.dumps(result), _now(), render_id))
@@ -448,6 +463,10 @@ def create_studio_render(payload: StudioCompositionRequest):
         audio = _studio_media_record(payload.audio_media_id)
         if audio["media_type"] != "audio":
             raise HTTPException(422, "audio_media_id must reference an audio asset.")
+    for track in payload.audio_tracks:
+        audio = _studio_media_record(track.media_id)
+        if audio["media_type"] != "audio":
+            raise HTTPException(422, "Every audio_tracks.media_id must reference an audio asset.")
     render_id = uuid.uuid4().hex
     now = _now()
     request_data = payload.model_dump()

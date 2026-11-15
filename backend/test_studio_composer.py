@@ -64,6 +64,50 @@ class ComposeVideoMotionTests(unittest.TestCase):
                     )
                 run.assert_not_called()
 
+    @patch("studio_composer.subprocess.run")
+    @patch("studio_composer.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    def test_multiple_audio_tracks_are_delayed_and_mixed(self, _which, run):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder) / "mixed.mp4"
+
+            def fake_run(command, **kwargs):
+                if command[0].endswith("ffmpeg"):
+                    output.write_bytes(b"fake-mp4")
+                    return SimpleNamespace(returncode=0, stderr="", stdout="")
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"format": {"duration": "4.0"}, "streams": [{"width": 360, "height": 640}]}),
+                    stderr="",
+                )
+
+            run.side_effect = fake_run
+            result = compose_video(
+                [{"path": Path(folder) / "still.png", "media_type": "image", "duration": 4.0, "motion": "static"}],
+                None, output, width=360, height=640, preset="veryfast",
+                audio_tracks=[
+                    {"path": Path(folder) / "voice.wav", "start_seconds": 0.5, "volume": 1.0, "loop": False},
+                    {"path": Path(folder) / "music.mp3", "start_seconds": 0, "volume": 0.2, "loop": True},
+                ],
+            )
+            command = run.call_args_list[0].args[0]
+            graph = command[command.index("-filter_complex") + 1]
+            self.assertIn("adelay=500|500", graph)
+            self.assertIn("volume=0.2", graph)
+            self.assertIn("amix=inputs=2", graph)
+            self.assertEqual(result["audio_track_count"], 2)
+
+    def test_audio_track_bounds_are_validated_before_render(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with patch("studio_composer.shutil.which", side_effect=lambda name: f"/usr/bin/{name}"):
+                with patch("studio_composer.subprocess.run") as run:
+                    with self.assertRaises(ValueError):
+                        compose_video(
+                            [{"path": Path(folder) / "still.png", "media_type": "image", "duration": 2.0}],
+                            None, Path(folder) / "out.mp4", width=360, height=640,
+                            audio_tracks=[{"path": Path(folder) / "music.mp3", "volume": 3.0}],
+                        )
+                    run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
