@@ -162,6 +162,26 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.json()["prompt_id"], "local-prompt-1")
         build_prompt.assert_called_once_with("sample-image", {"prompt": "A rainy street"})
 
+    def test_studio_media_library_lists_imported_assets(self):
+        from studio_routes import init_studio_db, _connect
+        init_studio_db()
+        with _connect() as db:
+            db.execute(
+                """INSERT INTO studio_media
+                (id, filename, stored_name, media_type, content_type, size_bytes, source_prompt_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("b" * 32, "scene.png", "b" * 32 + ".png", "image", "image/png", 1234, "prompt-list", "2026-11-15T00:00:00Z"),
+            )
+            db.commit()
+        response = self.client.get("/api/v1/studio/media", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["filename"], "scene.png")
+        self.assertEqual(response.json()["items"][0]["url"], "/api/v1/studio/media/" + "b" * 32)
+
+    def test_studio_media_library_requires_authentication(self):
+        response = self.client.get("/api/v1/studio/media")
+        self.assertEqual(response.status_code, 401)
+
     @patch("studio_routes.comfy_download_output")
     @patch("studio_routes.comfy_history")
     def test_completed_comfy_outputs_are_imported_and_downloadable(self, history, download):
