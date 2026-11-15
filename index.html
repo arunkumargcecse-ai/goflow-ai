@@ -35,7 +35,7 @@ label{color:#c5baff;font-size:11px;letter-spacing:.06em;text-transform:uppercase
 <section id="project" class="pane"><div class="grid"><div class="card"><h2>Project brief</h2><p class="muted">Define the story and delivery target.</p><label>Project title</label><input id="title" value="The Last Phone Call"><div class="row"><div><label>Language</label><select id="language"><option>Tamil</option><option>English</option><option>Hindi</option></select></div><div><label>Aspect ratio</label><select id="ratio"><option>9:16 · Shorts/Reels</option><option>16:9 · YouTube</option><option>1:1 · Square</option></select></div><div><label>Duration (sec)</label><input id="duration" type="number" min="5" max="3600" value="55"></div></div><label>Story / narration script</label><textarea id="script" placeholder="Paste your complete story or narration..."></textarea></div><div class="card"><h2>Character continuity</h2><p class="muted">Keep appearance, wardrobe and location consistent across shots.</p><label>Main character bible</label><textarea id="character" placeholder="Age, appearance, clothing, defining details..."></textarea><label>Locations & props</label><textarea id="locations" placeholder="Locations, key props, time of day..."></textarea><label>Creative direction</label><textarea id="direction" placeholder="Mood, pacing, emotional arc, visual intention..."></textarea></div></div><div class="card"><h2>Reference material</h2><p class="muted">Add a reference URL or select a local video for your own workflow notes.</p><label>Reference video URL</label><input id="referenceUrl" type="url" placeholder="https://..."><label>Local reference file (not uploaded)</label><input id="referenceFile" type="file" accept="video/*"><p class="notice">Reference analysis is not connected in this build. Use only material you have permission to analyse. Do not reuse reference footage, audio, logos or exact designs in exports.</p></div></section>
 <section id="ai-production" class="pane hide">
 <div class="card"><h2>AI story planner</h2><p class="muted">Create an editable scene plan through your secured backend. Without a configured language model, the API returns an offline planning scaffold—not generated story content.</p><div class="actions"><button class="btn primary" id="planStoryBtn">Build story & storyboard</button><button class="btn" id="refreshProvidersBtn">Check AI provider readiness</button></div><p class="muted" id="storyPlanStatus">Ready. Enter your story idea in Project brief and configure the backend URL and API key.</p><div id="providerReadiness" class="list"></div></div>
-<div class="card"><h2>Reference-video motion transfer</h2><p class="muted">Prepare your own character photo and driving/reference video for the local Wan 2.2 Animate workflow. This panel checks readiness and uploads inputs only; it does not start model inference.</p><div class="row"><div><label for="motionCharacterImage">Character reference photo</label><input id="motionCharacterImage" type="file" accept="image/png,image/jpeg,image/webp"></div><div><label for="motionDrivingVideo">Driving/reference video</label><input id="motionDrivingVideo" type="file" accept="video/mp4,video/webm,video/quicktime"></div></div><div class="actions"><button class="btn" id="checkMotionReadiness">Check local motion engine</button><button class="btn primary" id="uploadMotionInputs">Upload reference assets</button></div><p class="muted" id="motionReadinessStatus">Not checked. Start your local ComfyUI service, then check readiness.</p><div id="motionReadinessDetails" class="list"></div><div class="actions"><button class="btn" id="analyzeReferenceBtn" disabled>Extract reference frames</button><button class="btn primary" id="saveReferenceMapBtn" disabled>Save shot map</button><button class="btn" id="renderReferenceMapBtn" disabled>Render 720p MP4 locally</button></div><p class="muted" id="referenceRenderStatus">Local cinematic still-to-video render · selected narration and music tracks are mixed in · no AI motion transfer.</p><p class="muted" id="referenceAnalysisStatus">Upload a reference video to enable frame analysis.</p><div id="referenceFrameMap" class="grid"></div>
+<div class="card"><h2>Reference-video motion transfer</h2><p class="muted">Prepare your own character photo and driving/reference video for the local Wan 2.2 Animate workflow. This panel checks readiness and uploads inputs only; it does not start model inference.</p><div class="row"><div><label for="motionCharacterImage">Character reference photo</label><input id="motionCharacterImage" type="file" accept="image/png,image/jpeg,image/webp"></div><div><label for="motionDrivingVideo">Driving/reference video</label><input id="motionDrivingVideo" type="file" accept="video/mp4,video/webm,video/quicktime"></div></div><div class="actions"><button class="btn" id="checkMotionReadiness">Check local motion engine</button><button class="btn primary" id="uploadMotionInputs">Upload reference assets</button></div><p class="muted" id="motionReadinessStatus">Not checked. Start your local ComfyUI service, then check readiness.</p><div id="motionReadinessDetails" class="list"></div><div class="actions"><button class="btn" id="analyzeReferenceBtn" disabled>Extract reference frames</button><button class="btn primary" id="saveReferenceMapBtn" disabled>Save shot map</button><button class="btn" id="previewReferenceMapBtn" disabled>Preview full sequence (360p)</button><button class="btn" id="renderReferenceMapBtn" disabled>Render final 720p MP4</button></div><p class="muted" id="referenceRenderStatus">Local cinematic still-to-video render · selected narration and music tracks are mixed in · no AI motion transfer.</p><p class="muted" id="referenceAnalysisStatus">Upload a reference video to enable frame analysis.</p><div id="referenceFrameMap" class="grid"></div>
 <div class="card" style="margin-top:16px">
  <h3>Character library</h3>
  <p class="muted">Create a reusable character bible from your descriptions and imported Studio photos. Assign it to each reference shot to build consistent prompts.</p>
@@ -267,7 +267,7 @@ $('buildShotPromptsBtn').onclick=async()=>{
  try{
   const payload={shots:currentReferenceShots.map(s=>({analysis_id:currentReferenceAnalysis.analysis_id,frame_filename:s.filename,timestamp_seconds:s.timestamp_seconds,title:s.title,duration_seconds:s.duration_seconds,camera_direction:s.camera_direction,visual_notes:s.visual_notes,generation_prompt:s.generation_prompt,character_id:s.character_id||null}))};
   const saved=await studioApi('/studio/reference-videos/'+encodeURIComponent(currentReferenceMediaId)+'/shot-map',{method:'POST',body:JSON.stringify(payload)});
-  window.currentReferenceShotMapId=saved.map_id;$('renderReferenceMapBtn').disabled=false;
+  window.currentReferenceShotMapId=saved.map_id;$('renderReferenceMapBtn').disabled=false;$('previewReferenceMapBtn').disabled=false;
   const result=await studioApi('/studio/reference-videos/shot-maps/'+encodeURIComponent(saved.map_id)+'/build-prompts',{method:'POST'});
   result.prompts.forEach((item,index)=>{if(currentReferenceShots[index])currentReferenceShots[index].generation_prompt=item.generation_prompt});
   renderReferenceShotMap();status.textContent=result.prompt_count+' shot prompts assembled locally. '+result.execution_note;
@@ -327,23 +327,23 @@ $('saveReferenceMapBtn').onclick=async()=>{
  try{
   const payload={shots:currentReferenceShots.map(s=>({analysis_id:currentReferenceAnalysis.analysis_id,frame_filename:s.filename,timestamp_seconds:s.timestamp_seconds,title:s.title,duration_seconds:s.duration_seconds,camera_direction:s.camera_direction,visual_notes:s.visual_notes,generation_prompt:s.generation_prompt,character_id:s.character_id||null}))};
   const saved=await studioApi('/studio/reference-videos/'+encodeURIComponent(currentReferenceMediaId)+'/shot-map',{method:'POST',body:JSON.stringify(payload)});
-  window.currentReferenceShotMapId=saved.map_id;$('buildShotPromptsBtn').disabled=false;$('renderReferenceMapBtn').disabled=false;$('referenceAnalysisStatus').textContent='Shot map saved · '+saved.map_id+' · '+saved.shots.length+' editable shots.';$('shotPromptStatus').textContent='Shot map ready. Assign characters, then build prompts.';
+  window.currentReferenceShotMapId=saved.map_id;$('buildShotPromptsBtn').disabled=false;$('previewReferenceMapBtn').disabled=false;$('renderReferenceMapBtn').disabled=false;$('referenceAnalysisStatus').textContent='Shot map saved · '+saved.map_id+' · '+saved.shots.length+' editable shots.';$('shotPromptStatus').textContent='Shot map ready. Assign characters, then build prompts.';
  }catch(e){$('referenceAnalysisStatus').textContent='Could not save shot map: '+e.message}
  finally{button.disabled=false}
 };
-async function renderReferenceShotMap(){
- const button=$('renderReferenceMapBtn'),status=$('referenceRenderStatus');
+async function renderReferenceShotMap(preview=false){
+ const button=preview?$('previewReferenceMapBtn'):$('renderReferenceMapBtn'),otherButton=preview?$('renderReferenceMapBtn'):$('previewReferenceMapBtn'),status=$('referenceRenderStatus');
  if(!currentReferenceMediaId||!currentReferenceAnalysis||!currentReferenceShots.length){status.textContent='Extract reference frames first.';return}
- button.disabled=true;status.textContent='Saving the latest shot edits…';
+ button.disabled=true;otherButton.disabled=true;status.textContent=preview?'Saving edits before draft preview…':'Saving the latest shot edits…';
  try{
   const payload={shots:currentReferenceShots.map(s=>({analysis_id:currentReferenceAnalysis.analysis_id,frame_filename:s.filename,timestamp_seconds:s.timestamp_seconds,title:s.title,duration_seconds:s.duration_seconds,camera_direction:s.camera_direction,visual_notes:s.visual_notes,generation_prompt:s.generation_prompt,character_id:s.character_id||null}))};
   const saved=await studioApi('/studio/reference-videos/'+encodeURIComponent(currentReferenceMediaId)+'/shot-map',{method:'POST',body:JSON.stringify(payload)});
-  window.currentReferenceShotMapId=saved.map_id;status.textContent='Queueing local FFmpeg render…';
+  window.currentReferenceShotMapId=saved.map_id;status.textContent=preview?'Queueing low-resolution sequence preview…':'Queueing local FFmpeg render…';
   const shotAudioTracks=[
    $('studioVoiceTrack').value?{media_id:$('studioVoiceTrack').value,start_seconds:0,volume:1,loop:false}:null,
    $('studioAudioTrack').value?{media_id:$('studioAudioTrack').value,start_seconds:0,volume:0.18,loop:true}:null
   ].filter(Boolean);
-  const job=await studioApi('/studio/reference-videos/shot-maps/'+encodeURIComponent(saved.map_id)+'/render',{method:'POST',body:JSON.stringify({width:720,height:1280,preset:'veryfast',crf:22,audio_tracks:shotAudioTracks})});
+  const job=await studioApi('/studio/reference-videos/shot-maps/'+encodeURIComponent(saved.map_id)+'/render',{method:'POST',body:JSON.stringify({width:preview?360:720,height:preview?640:1280,preset:'veryfast',crf:preview?25:22,audio_tracks:shotAudioTracks})});
   status.textContent='Render '+job.render_id+' · '+job.status;
   for(let attempt=0;attempt<180;attempt++){
    await new Promise(resolve=>setTimeout(resolve,2000));
@@ -352,8 +352,8 @@ async function renderReferenceShotMap(){
     const response=await fetch(apiBase()+state.output_url,{headers:apiHeaders()});
     if(!response.ok)throw new Error('Render completed but MP4 download failed (HTTP '+response.status+')');
     const blob=await response.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url;a.download='goflow-shot-map-'+saved.map_id.slice(0,8)+'.mp4';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
-    status.textContent='720p MP4 rendered and downloaded · '+Number(state.result?.duration_seconds||0).toFixed(1)+' seconds. This is a still-image cinematic render, not generated motion.';
+    a.href=url;a.download='goflow-shot-map-'+(preview?'draft-':'')+saved.map_id.slice(0,8)+'.mp4';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
+    status.textContent=(preview?'360p draft preview':'720p final MP4')+' rendered and downloaded · '+Number(state.result?.duration_seconds||0).toFixed(1)+' seconds. Still-image cinematic render, not generated motion.';
     return;
    }
    if(state.status==='failed')throw new Error(state.error||'FFmpeg render failed');
@@ -361,9 +361,10 @@ async function renderReferenceShotMap(){
   }
   status.textContent='Render is still running. Check the Studio render status later: '+job.render_id;
  }catch(e){status.textContent='Local render failed: '+e.message}
- finally{button.disabled=false}
+ finally{button.disabled=false;otherButton.disabled=false}
 }
-$('renderReferenceMapBtn').onclick=renderReferenceShotMap;
+$('previewReferenceMapBtn').onclick=()=>renderReferenceShotMap(true);
+$('renderReferenceMapBtn').onclick=()=>renderReferenceShotMap(false);
 async function checkMotionReadiness(){
  const status=$('motionReadinessStatus'),root=$('motionReadinessDetails'),btn=$('checkMotionReadiness');
  btn.disabled=true;status.textContent='Checking local ComfyUI nodes and GPU…';root.innerHTML='';
