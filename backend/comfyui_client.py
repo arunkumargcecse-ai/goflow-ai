@@ -1,6 +1,6 @@
 """Fixed-origin ComfyUI API client; never accepts a target URL from the browser."""
 from __future__ import annotations
-import os, re
+import json, os, re
 from typing import Any
 import httpx
 
