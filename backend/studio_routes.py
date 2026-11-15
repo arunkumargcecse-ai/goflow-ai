@@ -102,7 +102,13 @@ def get_generation(generation_id: str):
     return record
 
 
-@router.get("/studio/workflows")\ndef studio_workflows(category: Literal["image", "video", "audio"] | None = None):\n    """List curated workflow templates and their explicit readiness/licensing state."""\n    return list_workflows(category)\n\n\n@router.get("/studio/providers")
+@router.get("/studio/workflows")
+def studio_workflows(category: Literal["image", "video", "audio"] | None = None):
+    """List curated workflow templates and their explicit readiness/licensing state."""
+    return list_workflows(category)
+
+
+@router.get("/studio/providers")
 def studio_providers():
     return {
         "budget_mode": "zero_cost",
