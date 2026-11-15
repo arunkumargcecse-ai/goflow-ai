@@ -46,6 +46,7 @@ label{color:#c5baff;font-size:11px;letter-spacing:.06em;text-transform:uppercase
  </div>
  <div class="card inspector-card"><h2>Shot inspector</h2><p class="muted">Select a storyboard card or timeline clip to inspect its details.</p><div class="inspector-empty" id="inspectorEmpty">Choose a shot to view its camera, duration and prompt.</div><div id="shotInspector" class="hide"><label>Shot description</label><p id="inspectorDescription"></p><label>Camera direction</label><p id="inspectorCamera"></p><label>Generation prompt</label><p id="inspectorPrompt"></p><label>Continuity notes</label><p id="inspectorContinuity"></p><label>Duration</label><p id="inspectorDuration"></p><button class="btn" id="editSelectedShot">Edit in Storyboard</button></div></div>
 </div>
+<div class="card"><div class="editor-heading"><div><h2>Generated media library</h2><p class="muted">Load completed local ComfyUI outputs, preview them, and attach one to the selected storyboard shot.</p></div><button class="btn" id="refreshStudioMedia">Refresh assets</button></div><p class="muted" id="studioMediaStatus">Connect your backend and load generated assets.</p><div id="studioMediaItems" class="list"></div></div>
 <div class="card"><div class="editor-heading"><div><h2>Storyboard frames</h2><p class="muted">Select a frame to preview it. Drag cards to reorder your sequence.</p></div><button class="btn primary" id="editorAddShot">＋ Add shot</button></div><div id="visualStoryboard" class="visual-storyboard"></div></div>
 <div class="card"><div class="editor-heading"><div><h2>Interactive timeline</h2><p class="muted">Drag clips left or right to change shot order. Timing follows each storyboard shot.</p></div><span class="pill" id="visualTimelineDuration">0 SEC</span></div><div class="timeline-ruler"><span>00:00</span><span>SHOT SEQUENCE</span><span id="timelineEndLabel">00:00</span></div><div id="visualTimeline" class="visual-timeline"></div><p class="notice">This workspace edits the storyboard plan and timing order. It does not yet display source-video frames or perform frame-accurate trimming.</p></div>
 </section>
@@ -72,6 +73,40 @@ $('inspectorEmpty').classList.toggle('hide',!!shot);$('shotInspector').classList
 $('visualStoryboard').innerHTML=scenes.map((s,i)=>'<div class="visual-frame '+(i===selectedVisualShot?'selected':'')+'" draggable="true" data-frame="'+i+'"><div class="frame-art" style="--frame-glow:'+(i%2?'rgba(44,197,184,.28)':'rgba(121,102,255,.32)')+'"><span>FRAME '+String(i+1).padStart(2,'0')+'</span><b>'+escapeHtml(s.desc||'Untitled shot')+'</b></div><div class="frame-meta"><span>'+escapeHtml(s.shot||'Medium')+'</span><b>'+Number(s.duration||0)+'s</b></div></div>').join('')||'<div class="timeline-empty">No storyboard frames yet. Add your first shot.</div>';
 $('visualTimeline').innerHTML=scenes.map((s,i)=>'<div class="timeline-clip '+(i===selectedVisualShot?'selected':'')+'" draggable="true" data-clip="'+i+'"><span class="clip-handle">⠿</span><b>'+String(i+1).padStart(2,'0')+' · '+escapeHtml(s.desc||'Untitled shot')+'</b><span>'+Number(s.duration||0)+' sec planned</span><div class="clip-range"><div><label>Source in (s)</label><input type="number" min="0" step="0.1" data-range-index="'+i+'" data-range-field="sourceIn" value="'+(Number.isFinite(Number(s.sourceIn))&&s.sourceIn!==null?s.sourceIn:'')+'" placeholder="0.0"></div><div><label>Source out (s)</label><input type="number" min="0.1" step="0.1" data-range-index="'+i+'" data-range-field="sourceOut" value="'+(Number.isFinite(Number(s.sourceOut))&&s.sourceOut!==null?s.sourceOut:'')+'" placeholder="End"></div></div></div>').join('')||'<div class="timeline-empty">Your shot timeline will appear here.</div>';
 [['visualStoryboard','frame'],['visualTimeline','clip']].forEach(([id,key])=>{const root=$(id);root.querySelectorAll('[data-'+key+']').forEach(el=>{const i=Number(el.dataset[key]);el.addEventListener('click',()=>selectVisualShot(i));el.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/plain',String(i));el.classList.add('dragging')});el.addEventListener('dragend',()=>el.classList.remove('dragging'));el.addEventListener('dragover',e=>e.preventDefault());el.addEventListener('drop',e=>{e.preventDefault();moveShot(Number(e.dataTransfer.getData('text/plain')),i)})})});root.querySelectorAll('[data-range-index]').forEach(input=>{input.addEventListener('click',e=>e.stopPropagation());input.addEventListener('dragstart',e=>e.preventDefault());input.addEventListener('input',e=>{const item=scenes[Number(e.target.dataset.rangeIndex)];item[e.target.dataset.rangeField]=e.target.value===''?null:Number(e.target.value);save(true)})});
+}
+let studioMediaCache=[];
+async function refreshStudioMedia(){
+ const status=$('studioMediaStatus'),root=$('studioMediaItems'),button=$('refreshStudioMedia');
+ if(!status||!root)return;
+ if(button)button.disabled=true;status.textContent='Loading generated assets…';
+ try{
+  const data=await studioApi('/studio/media');
+  studioMediaCache=Array.isArray(data.items)?data.items:[];
+  root.innerHTML=studioMediaCache.map((item,i)=>'<div class="item"><div><b>'+escapeHtml(item.filename)+'</b><div class="muted">'+escapeHtml(item.media_type)+' · '+Math.round(item.size_bytes/1024)+' KB</div></div><div class="actions"><button class="btn" data-preview-media="'+i+'">Preview</button><button class="btn primary" data-attach-media="'+i+'">Attach to selected shot</button></div></div>').join('')||'<p class="muted">No generated assets found yet. Complete a local ComfyUI job first.</p>';
+  root.querySelectorAll('[data-preview-media]').forEach(b=>b.onclick=()=>previewStudioMedia(studioMediaCache[Number(b.dataset.previewMedia)]));
+  root.querySelectorAll('[data-attach-media]').forEach(b=>b.onclick=()=>attachStudioMedia(studioMediaCache[Number(b.dataset.attachMedia)]));
+  status.textContent=studioMediaCache.length+' generated asset(s) available in local Studio storage.';
+ }catch(e){status.textContent='Could not load generated assets: '+e.message}
+ finally{if(button)button.disabled=false}
+}
+function previewStudioMedia(item){
+ if(!item)return;
+ const video=$('mediaPreview'),stage=$('previewStage');
+ if(item.media_type==='video'){
+  video.src=apiBase()+item.url;video.classList.remove('hide');$('previewGrain').classList.add('hide');
+  $('previewMediaStatus').textContent='Generated video: '+item.filename;
+ }else{
+  video.pause();video.classList.add('hide');$('previewGrain').classList.remove('hide');
+  let img=stage.querySelector('[data-studio-image]');
+  if(!img){img=document.createElement('img');img.dataset.studioImage='1';img.className='media-preview';img.alt='Generated image preview';stage.appendChild(img)}
+  img.src=apiBase()+item.url;$('previewMediaStatus').textContent='Generated image: '+item.filename;
+ }
+}
+function attachStudioMedia(item){
+ const shot=scenes[selectedVisualShot];if(!shot){$('studioMediaStatus').textContent='Add or select a storyboard shot before attaching media.';return}
+ shot.generatedMedia={id:item.id,filename:item.filename,media_type:item.media_type,url:item.url};
+ save(true);renderVisualEditor();$('studioMediaStatus').textContent=item.filename+' attached to shot '+(selectedVisualShot+1)+'.';
+ previewStudioMedia(item);
 }
 $('previousShot').onclick=()=>selectVisualShot(selectedVisualShot-1);$('nextShot').onclick=()=>selectVisualShot(selectedVisualShot+1);$('editorAddShot').onclick=()=>{addScene();selectVisualShot(scenes.length-1)};$('editSelectedShot').onclick=()=>{document.querySelector('[data-tab="storyboard"]').click();const el=$('scenes').children[selectedVisualShot];if(el)el.scrollIntoView({behavior:'smooth',block:'center'})};
 function addScene(){scenes.push({duration:6,camera:'',shot:'Medium',desc:'',prompt:'',continuity:''});renderScenes();save(true)}
