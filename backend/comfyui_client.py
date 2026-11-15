@@ -88,6 +88,39 @@ def upload_image(filename: str, content_type: str, data: bytes) -> dict[str, str
     return {"image_ref": image_ref, "name": name, "subfolder": subfolder, "type": result.get("type", "input")}
 
 
+
+def upload_video(filename: str, content_type: str, data: bytes) -> dict[str, str]:
+    """Upload a validated reference video into the configured local ComfyUI input folder."""
+    allowed = {"video/mp4", "video/webm", "video/quicktime"}
+    if content_type not in allowed:
+        raise ValueError("Only MP4, WebM, and QuickTime reference videos are supported.")
+    if not data or len(data) > 100 * 1024 * 1024:
+        raise ValueError("Reference video must be between 1 byte and 100 MB.")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename.rsplit("/", 1)[-1].rsplit(chr(92), 1)[-1])[:120]
+    if not safe_name or safe_name in {".", ".."}:
+        raise ValueError("Invalid reference video filename.")
+    try:
+        with _client() as client:
+            response = client.post(
+                f"{base_url()}/upload/image",
+                files={"image": (safe_name, data, content_type)},
+                data={"type": "input", "overwrite": "false"},
+            )
+            response.raise_for_status()
+            result = response.json()
+    except httpx.HTTPError as exc:
+        raise ComfyUIError(f"Could not upload reference video to ComfyUI: {exc}") from exc
+    name, subfolder = result.get("name"), result.get("subfolder", "")
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}", name):
+        raise ComfyUIError("ComfyUI returned an invalid uploaded video name.")
+    if not isinstance(subfolder, str) or (subfolder and not re.fullmatch(r"[A-Za-z0-9_./-]{1,160}", subfolder)):
+        raise ComfyUIError("ComfyUI returned an invalid video subfolder.")
+    video_ref = f"{subfolder}/{name}" if subfolder else name
+    if ".." in video_ref.split("/"):
+        raise ComfyUIError("ComfyUI returned an unsafe uploaded video path.")
+    return {"video_ref": video_ref, "name": name, "subfolder": subfolder, "type": result.get("type", "input")}
+
+
 def download_output(filename: str, subfolder: str = "", output_type: str = "output") -> tuple[bytes, str]:
     """Download a ComfyUI output using validated view parameters, never a browser URL."""
     if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,180}", filename) or filename in {".", ".."}:
