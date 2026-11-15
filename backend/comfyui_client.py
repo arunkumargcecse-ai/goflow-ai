@@ -102,7 +102,8 @@ def inspect_wan_animate_readiness() -> dict[str, Any]:
         "required_models": [{"filename": name, "folder": folder} for name, folder in required_models.items()],
         "available_models": installed_models,
         "missing_models": missing_models,
-        "devices": device_summary, "hardware_assessment": assess_wan_hardware(device_summary),\n        "model_weights_verified": not missing_models,
+        "devices": device_summary, "hardware_assessment": assess_wan_hardware(device_summary),
+        "model_weights_verified": not missing_models,
         "ready_to_generate": False,
         "next_step": "Install any missing model files and required custom nodes, then run a short local test. This check did not download or generate anything."}
 
