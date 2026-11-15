@@ -1,7 +1,7 @@
 import unittest
 from pydantic import ValidationError
 
-from studio_routes import ReferenceShot, ReferenceShotMapRequest
+from studio_routes import ReferenceShot, ReferenceShotMapRequest, ShotMapRenderRequest, _shot_motion_preset
 
 
 class ReferenceShotMapModelTests(unittest.TestCase):
@@ -22,6 +22,23 @@ class ReferenceShotMapModelTests(unittest.TestCase):
                 frame_filename="../secret.jpg",
                 timestamp_seconds=1,
             )
+
+    def test_shot_map_render_defaults_to_laptop_friendly_720p(self):
+        payload = ShotMapRenderRequest()
+        self.assertEqual((payload.width, payload.height), (720, 1280))
+        self.assertEqual(payload.preset, "veryfast")
+        self.assertEqual(payload.crf, 22)
+
+    def test_camera_direction_maps_to_safe_motion_presets(self):
+        self.assertEqual(_shot_motion_preset("Pan left slowly"), "pan_left")
+        self.assertEqual(_shot_motion_preset("Camera moves right"), "pan_right")
+        self.assertEqual(_shot_motion_preset("Zoom out to wide shot"), "zoom_out")
+        self.assertEqual(_shot_motion_preset("Locked static shot"), "static")
+        self.assertEqual(_shot_motion_preset("Dolly forward"), "zoom_in")
+
+    def test_rejects_out_of_range_render_dimensions(self):
+        with self.assertRaises(ValidationError):
+            ShotMapRenderRequest(width=100, height=1280)
 
     def test_rejects_more_than_twelve_shots(self):
         shots = [

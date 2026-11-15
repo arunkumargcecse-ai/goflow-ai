@@ -677,6 +677,107 @@ def create_studio_render(payload: StudioCompositionRequest):
     return {"render_id": render_id, "status": "queued", "status_url": "/api/v1/studio/renders/" + render_id}
 
 
+class ShotMapRenderRequest(BaseModel):
+    audio_tracks: list[AudioTrack] = Field(default_factory=list, max_length=20)
+    width: int = Field(default=720, ge=320, le=3840)
+    height: int = Field(default=1280, ge=320, le=3840)
+    preset: Literal["veryfast", "medium", "slow", "veryslow"] = "veryfast"
+    crf: int = Field(default=22, ge=16, le=28)
+
+
+def _shot_motion_preset(direction: str) -> str:
+    value = (direction or "").lower()
+    if "left" in value:
+        return "pan_left"
+    if "right" in value:
+        return "pan_right"
+    if "zoom out" in value or "pull out" in value or "wide" in value:
+        return "zoom_out"
+    if "static" in value or "locked" in value:
+        return "static"
+    return "zoom_in"
+
+
+@router.post("/studio/reference-videos/shot-maps/{map_id}/render", status_code=202)
+def render_reference_shot_map(map_id: str, payload: ShotMapRenderRequest):
+    """Render an editable shot map locally as a cinematic still-based MP4.
+
+    Uses assigned character images where available, otherwise the extracted
+    reference frame. Camera direction is approximated with FFmpeg pan/zoom;
+    this is not generative video or true motion transfer.
+    """
+    if not re.fullmatch(r"[a-f0-9]{32}", map_id):
+        raise HTTPException(422, "Invalid shot map id.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute(
+            "SELECT map_json FROM studio_reference_shot_maps WHERE id = ?", (map_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Reference shot map not found.")
+    shot_map = json.loads(row["map_json"])
+    analysis_root = (_studio_output_dir() / "reference-analysis").resolve()
+    clips = []
+    for index, shot in enumerate(shot_map.get("shots", []), start=1):
+        media_id = shot.get("character_media_id")
+        if not media_id and shot.get("character_id"):
+            with _connect() as db:
+                character_row = db.execute(
+                    "SELECT profile_json FROM studio_characters WHERE id = ?",
+                    (shot["character_id"],),
+                ).fetchone()
+            if not character_row:
+                raise HTTPException(422, f"Character profile for shot {index} no longer exists.")
+            profile = json.loads(character_row["profile_json"])
+            references = profile.get("reference_media_ids") or []
+            media_id = references[0] if references else None
+        if media_id:
+            asset = _studio_media_record(media_id)
+            if asset["media_type"] != "image":
+                raise HTTPException(422, f"Shot {index} character reference must be an image.")
+        else:
+            analysis_id = shot.get("analysis_id", "")
+            filename = shot.get("frame_filename", "")
+            if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\.jpg", filename):
+                raise HTTPException(422, f"Shot {index} has an invalid reference frame.")
+            frame_path = (analysis_root / analysis_id / filename).resolve()
+            if analysis_root not in frame_path.parents or not frame_path.is_file():
+                raise HTTPException(422, f"Reference frame for shot {index} is unavailable.")
+            media_id = uuid.uuid4().hex
+            stored_name = media_id + ".jpg"
+            destination = _studio_output_dir() / stored_name
+            destination.write_bytes(frame_path.read_bytes())
+            now = _now()
+            try:
+                with _connect() as db:
+                    db.execute(
+                        """INSERT INTO studio_media
+                        (id, filename, stored_name, media_type, content_type, size_bytes, source_prompt_id, created_at)
+                        VALUES (?, ?, ?, 'image', 'image/jpeg', ?, ?, ?)""",
+                        (media_id, f"reference-shot-{index:02d}.jpg", stored_name,
+                         destination.stat().st_size, "shot-map-" + map_id, now),
+                    )
+                    db.commit()
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
+        clips.append({
+            "media_id": media_id,
+            "duration": shot.get("duration_seconds", 3),
+            "motion": _shot_motion_preset(shot.get("camera_direction", "")),
+        })
+    if not clips:
+        raise HTTPException(422, "Shot map contains no shots to render.")
+    return create_studio_render(StudioCompositionRequest(
+        clips=clips,
+        audio_tracks=payload.audio_tracks,
+        width=payload.width,
+        height=payload.height,
+        preset=payload.preset,
+        crf=payload.crf,
+    ))
+
+
 @router.get("/studio/renders/{render_id}")
 def studio_render_status(render_id: str):
     if not re.fullmatch(r"[a-f0-9]{32}", render_id):
