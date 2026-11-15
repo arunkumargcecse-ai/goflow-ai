@@ -75,7 +75,7 @@ jobs:
       - name: Compile backend and run unit tests
         working-directory: backend
         run: |
-          python -m compileall -q main.py studio_routes.py story_engine.py generation_providers.py test_backend.py test_studio_routes.py
+          python -m compileall -q main.py studio_routes.py studio_composer.py story_engine.py generation_providers.py test_backend.py test_studio_routes.py
           python -m unittest -v test_backend test_studio_routes
       - name: Start API and smoke-test endpoints
         working-directory: backend
@@ -125,5 +125,5 @@ jobs:
           pip install -r requirements.txt
       - name: Test real upload, multi-clip render and MP4 download
         working-directory: backend
-        run: python smoke_render.py
+        run: python smoke_render.py && python smoke_studio_composer.py
 

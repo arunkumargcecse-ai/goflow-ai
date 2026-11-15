@@ -46,7 +46,7 @@ label{color:#c5baff;font-size:11px;letter-spacing:.06em;text-transform:uppercase
  </div>
  <div class="card inspector-card"><h2>Shot inspector</h2><p class="muted">Select a storyboard card or timeline clip to inspect its details.</p><div class="inspector-empty" id="inspectorEmpty">Choose a shot to view its camera, duration and prompt.</div><div id="shotInspector" class="hide"><label>Shot description</label><p id="inspectorDescription"></p><label>Camera direction</label><p id="inspectorCamera"></p><label>Generation prompt</label><p id="inspectorPrompt"></p><label>Continuity notes</label><p id="inspectorContinuity"></p><label>Duration</label><p id="inspectorDuration"></p><button class="btn" id="editSelectedShot">Edit in Storyboard</button></div></div>
 </div>
-<div class="card"><div class="editor-heading"><div><h2>Generated media library</h2><p class="muted">Load completed local ComfyUI outputs, preview them, and attach one to the selected storyboard shot.</p></div><button class="btn" id="refreshStudioMedia">Refresh assets</button></div><p class="muted" id="studioMediaStatus">Connect your backend and load generated assets.</p><div id="studioMediaItems" class="list"></div></div>
+<div class="card"><div class="editor-heading"><div><h2>Generated media library</h2><p class="muted">Load completed local ComfyUI outputs, preview them, and attach one to the selected storyboard shot.</p></div><div class="actions"><button class="btn" id="refreshStudioMedia">Refresh assets</button><button class="btn primary" id="renderStudioTimeline">Render MP4</button></div></div><div class="row"><div><label for="studioAudioTrack">Optional audio bed</label><select id="studioAudioTrack"><option value="">No audio track</option></select></div><div><label for="studioRenderPreset">Render quality</label><select id="studioRenderPreset"><option value="slow">Cinematic quality (slow)</option><option value="medium">Balanced</option><option value="veryfast">Fast preview</option></select></div></div><p class="muted" id="studioMediaStatus">Connect your backend and load generated assets.</p><p class="muted" id="studioRenderStatus">Attach media to every shot, then render your sequence.</p><a class="btn hide" id="studioRenderDownload" href="#" download>Download rendered MP4</a><div id="studioMediaItems" class="list"></div></div>
 <div class="card"><div class="editor-heading"><div><h2>Storyboard frames</h2><p class="muted">Select a frame to preview it. Drag cards to reorder your sequence.</p></div><button class="btn primary" id="editorAddShot">＋ Add shot</button></div><div id="visualStoryboard" class="visual-storyboard"></div></div>
 <div class="card"><div class="editor-heading"><div><h2>Interactive timeline</h2><p class="muted">Drag clips left or right to change shot order. Timing follows each storyboard shot.</p></div><span class="pill" id="visualTimelineDuration">0 SEC</span></div><div class="timeline-ruler"><span>00:00</span><span>SHOT SEQUENCE</span><span id="timelineEndLabel">00:00</span></div><div id="visualTimeline" class="visual-timeline"></div><p class="notice">This workspace edits the storyboard plan and timing order. It does not yet display source-video frames or perform frame-accurate trimming.</p></div>
 </section>
@@ -86,7 +86,7 @@ async function refreshStudioMedia(){
   root.innerHTML=studioMediaCache.map((item,i)=>'<div class="item"><div><b>'+escapeHtml(item.filename)+'</b><div class="muted">'+escapeHtml(item.media_type)+' · '+Math.round(item.size_bytes/1024)+' KB</div></div><div class="actions"><button class="btn" data-preview-media="'+i+'">Preview</button><button class="btn primary" data-attach-media="'+i+'">Attach to selected shot</button></div></div>').join('')||'<p class="muted">No generated assets found yet. Complete a local ComfyUI job first.</p>';
   root.querySelectorAll('[data-preview-media]').forEach(b=>b.onclick=()=>previewStudioMedia(studioMediaCache[Number(b.dataset.previewMedia)]));
   root.querySelectorAll('[data-attach-media]').forEach(b=>b.onclick=()=>attachStudioMedia(studioMediaCache[Number(b.dataset.attachMedia)]));
-  status.textContent=studioMediaCache.length+' generated asset(s) available in local Studio storage.';
+  const audio=$('studioAudioTrack');if(audio){audio.innerHTML='<option value="">No audio track</option>'+studioMediaCache.filter(x=>x.media_type==='audio').map(x=>'<option value="'+escapeHtml(x.id)+'">'+escapeHtml(x.filename)+'</option>').join('')}status.textContent=studioMediaCache.length+' generated asset(s) available in local Studio storage.';
  }catch(e){status.textContent='Could not load generated assets: '+e.message}
  finally{if(button)button.disabled=false}
 }
@@ -108,6 +108,39 @@ function attachStudioMedia(item){
  shot.generatedMedia={id:item.id,filename:item.filename,media_type:item.media_type,url:item.url};
  save(true);renderVisualEditor();$('studioMediaStatus').textContent=item.filename+' attached to shot '+(selectedVisualShot+1)+'.';
  previewStudioMedia(item);
+}
+
+$('renderStudioTimeline').onclick=renderStudioTimeline;
+let activeStudioRender=null;
+async function renderStudioTimeline(){
+ const status=$('studioRenderStatus'),button=$('renderStudioTimeline');
+ const clips=scenes.map(scene=>({scene,asset:scene.generatedMedia})).filter(x=>x.asset);
+ if(!scenes.length){status.textContent='Create storyboard shots before rendering.';return}
+ if(clips.length!==scenes.length){status.textContent='Attach a generated image or video to every storyboard shot before rendering.';return}
+ const payload={
+  clips:clips.map(({scene,asset})=>({media_id:asset.id,duration:Number(scene.duration)||5,source_in:Number(scene.sourceIn)||0,source_out:scene.sourceOut==null||scene.sourceOut===''?null:Number(scene.sourceOut)})),
+  audio_media_id:$('studioAudioTrack').value||null,
+  width:1080,height:1920,preset:$('studioRenderPreset').value,crf:18
+ };
+ button.disabled=true;$('studioRenderDownload').classList.add('hide');status.textContent='Submitting local FFmpeg composition…';
+ try{
+  const job=await studioApi('/studio/renders',{method:'POST',body:JSON.stringify(payload)});
+  activeStudioRender=job.render_id;status.textContent='Render queued. Waiting for local FFmpeg…';
+  pollStudioRender(job.render_id);
+ }catch(e){status.textContent='Render could not start: '+e.message;button.disabled=false}
+}
+async function pollStudioRender(id){
+ const button=$('renderStudioTimeline'),status=$('studioRenderStatus');
+ try{
+  const job=await studioApi('/studio/renders/'+id);
+  if(job.status==='completed'){
+   status.textContent='Render complete · '+Number(job.result?.duration_seconds||0).toFixed(1)+' sec · '+job.result?.width+'×'+job.result?.height;
+   const link=$('studioRenderDownload');link.href=apiBase()+'/api/v1/studio/renders/'+id+'/output';link.classList.remove('hide');button.disabled=false;return;
+  }
+  if(job.status==='failed'){status.textContent='Render failed: '+(job.error||'Unknown FFmpeg error');button.disabled=false;return}
+  status.textContent='Rendering locally… '+job.progress+'%';
+  setTimeout(()=>pollStudioRender(id),2000);
+ }catch(e){status.textContent='Could not check render status: '+e.message;button.disabled=false}
 }
 $('previousShot').onclick=()=>selectVisualShot(selectedVisualShot-1);$('nextShot').onclick=()=>selectVisualShot(selectedVisualShot+1);$('editorAddShot').onclick=()=>{addScene();selectVisualShot(scenes.length-1)};$('editSelectedShot').onclick=()=>{document.querySelector('[data-tab="storyboard"]').click();const el=$('scenes').children[selectedVisualShot];if(el)el.scrollIntoView({behavior:'smooth',block:'center'})};
 function addScene(){scenes.push({duration:6,camera:'',shot:'Medium',desc:'',prompt:'',continuity:''});renderScenes();save(true)}
