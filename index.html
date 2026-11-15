@@ -217,9 +217,10 @@ let studioCharacters=[];
 function renderReferenceShotMap(){
  const root=$('referenceFrameMap');
  if(!currentReferenceAnalysis){root.innerHTML='';return}
- root.innerHTML=currentReferenceShots.map((shot,index)=>'<div class="card"><img src="'+escapeHtml(shot.url)+'" alt="Reference frame '+(index+1)+'" style="width:100%;aspect-ratio:9/16;object-fit:contain;background:#111;border-radius:10px"><p class="muted">Frame '+(index+1)+' · '+Number(shot.timestamp_seconds).toFixed(2)+' sec</p><label>Shot title</label><input data-shot="'+index+'" data-field="title" value="'+escapeHtml(shot.title||('Shot '+(index+1)))+'"><label>Duration (sec)</label><input type="number" min="0.5" max="60" step="0.5" data-shot="'+index+'" data-field="duration_seconds" value="'+Number(shot.duration_seconds||3)+'"><label>Camera direction</label><input data-shot="'+index+'" data-field="camera_direction" value="'+escapeHtml(shot.camera_direction||'Static')+'"><label>Assign character</label><select data-shot="'+index+'" data-field="character_id"><option value="">No character</option>'+studioCharacters.map(c=>'<option value="'+escapeHtml(c.character_id)+'" '+(shot.character_id===c.character_id?'selected':'')+'>'+escapeHtml(c.name)+'</option>').join('')+'</select><label>Visual notes</label><textarea data-shot="'+index+'" data-field="visual_notes">'+escapeHtml(shot.visual_notes||'')+'</textarea><label>Generation prompt</label><textarea data-shot="'+index+'" data-field="generation_prompt">'+escapeHtml(shot.generation_prompt||'')+'</textarea><div class="actions"><button class="btn primary" type="button" data-export-shot="'+index+'">Export Wan workflow JSON</button><span class="muted" id="wanExportStatus'+index+'">Editable ComfyUI workflow · manual execution</span></div></div>').join('');
+ root.innerHTML=currentReferenceShots.map((shot,index)=>'<div class="card"><img src="'+escapeHtml(shot.url)+'" alt="Reference frame '+(index+1)+'" style="width:100%;aspect-ratio:9/16;object-fit:contain;background:#111;border-radius:10px"><p class="muted">Frame '+(index+1)+' · '+Number(shot.timestamp_seconds).toFixed(2)+' sec</p><label>Shot title</label><input data-shot="'+index+'" data-field="title" value="'+escapeHtml(shot.title||('Shot '+(index+1)))+'"><label>Duration (sec)</label><input type="number" min="0.5" max="60" step="0.5" data-shot="'+index+'" data-field="duration_seconds" value="'+Number(shot.duration_seconds||3)+'"><label>Camera direction</label><input data-shot="'+index+'" data-field="camera_direction" value="'+escapeHtml(shot.camera_direction||'Static')+'"><label>Assign character</label><select data-shot="'+index+'" data-field="character_id"><option value="">No character</option>'+studioCharacters.map(c=>'<option value="'+escapeHtml(c.character_id)+'" '+(shot.character_id===c.character_id?'selected':'')+'>'+escapeHtml(c.name)+'</option>').join('')+'</select><label>Visual notes</label><textarea data-shot="'+index+'" data-field="visual_notes">'+escapeHtml(shot.visual_notes||'')+'</textarea><label>Generation prompt</label><textarea data-shot="'+index+'" data-field="generation_prompt">'+escapeHtml(shot.generation_prompt||'')+'</textarea><div class="actions"><button class="btn" type="button" data-preview-shot="'+index+'">Preview shot</button><span class="muted" id="shotPreviewStatus'+index+'">Short 360p local preview</span></div><video id="shotPreviewVideo'+index+' " controls playsinline style="display:none;width:100%;max-height:420px;border-radius:10px;background:#000;margin-top:10px"></video><div class="actions"><button class="btn primary" type="button" data-export-shot="'+index+'">Export Wan workflow JSON</button><span class="muted" id="wanExportStatus'+index+'">Editable ComfyUI workflow · manual execution</span></div></div>').join('');
  root.querySelectorAll('[data-shot][data-field]').forEach(el=>el.addEventListener('input',()=>{const s=currentReferenceShots[Number(el.dataset.shot)];s[el.dataset.field]=el.dataset.field==='duration_seconds'?Number(el.value):el.value;}));
  root.querySelectorAll('[data-export-shot]').forEach(button=>button.addEventListener('click',()=>exportWanShotWorkflow(Number(button.dataset.exportShot))));
+ root.querySelectorAll('[data-preview-shot]').forEach(button=>button.addEventListener('click',()=>previewReferenceShot(Number(button.dataset.previewShot))));
 
 }
 $('analyzeReferenceBtn').onclick=async()=>{
@@ -273,6 +274,35 @@ $('buildShotPromptsBtn').onclick=async()=>{
  }catch(e){status.textContent='Prompt assembly failed: '+e.message}
  finally{button.disabled=false}
 };
+async function previewReferenceShot(index){
+ const status=$('shotPreviewStatus'+index),video=$('shotPreviewVideo'+index),button=document.querySelector('[data-preview-shot="'+index+'"]');
+ if(!currentReferenceMediaId||!currentReferenceAnalysis||!currentReferenceShots[index]){status.textContent='Extract reference frames first.';return}
+ if(button)button.disabled=true;video.style.display='none';status.textContent='Saving latest shot edits…';
+ try{
+  const payload={shots:currentReferenceShots.map(s=>({analysis_id:currentReferenceAnalysis.analysis_id,frame_filename:s.filename,timestamp_seconds:s.timestamp_seconds,title:s.title,duration_seconds:s.duration_seconds,camera_direction:s.camera_direction,visual_notes:s.visual_notes,generation_prompt:s.generation_prompt,character_id:s.character_id||null}))};
+  const saved=await studioApi('/studio/reference-videos/'+encodeURIComponent(currentReferenceMediaId)+'/shot-map',{method:'POST',body:JSON.stringify(payload)});
+  window.currentReferenceShotMapId=saved.map_id;
+  status.textContent='Rendering short 360p preview…';
+  const job=await studioApi('/studio/reference-videos/shot-maps/'+encodeURIComponent(saved.map_id)+'/shots/'+(index+1)+'/preview',{method:'POST',body:JSON.stringify({duration_seconds:2.5,width:360,height:640,crf:25})});
+  for(let attempt=0;attempt<90;attempt++){
+   await new Promise(resolve=>setTimeout(resolve,1000));
+   const state=await studioApi('/studio/renders/'+encodeURIComponent(job.render_id));
+   if(state.status==='completed'){
+    const response=await fetch(apiBase()+state.output_url,{headers:apiHeaders()});
+    if(!response.ok)throw new Error('Preview download failed (HTTP '+response.status+')');
+    const blob=await response.blob(),url=URL.createObjectURL(blob);
+    if(video.dataset.objectUrl)URL.revokeObjectURL(video.dataset.objectUrl);
+    video.dataset.objectUrl=url;video.src=url;video.style.display='block';
+    status.textContent='Preview ready · review the framing and camera movement before final render.';
+    return;
+   }
+   if(state.status==='failed')throw new Error(state.error||'Preview render failed');
+   status.textContent='Rendering preview… '+(attempt+1)+' sec';
+  }
+  status.textContent='Preview is still processing. Render ID: '+job.render_id;
+ }catch(e){status.textContent='Preview failed: '+e.message}
+ finally{if(button)button.disabled=false}
+}
 async function exportWanShotWorkflow(index){
  const status=$('wanExportStatus'+index),button=document.querySelector('[data-export-shot="'+index+'"]');
  if(!currentReferenceMediaId||!currentReferenceAnalysis||!currentReferenceShots[index]){if(status)status.textContent='Extract reference frames first.';return}
