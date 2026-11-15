@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,7 @@ from comfyui_client import ComfyUIError, download_output as comfy_download_outpu
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
+from studio_composer import compose_video
 
 router = APIRouter()
 
@@ -60,6 +62,7 @@ def init_studio_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
+        db.execute("CREATE TABLE IF NOT EXISTS studio_renders (id TEXT PRIMARY KEY, status TEXT NOT NULL, progress INTEGER NOT NULL, request_json TEXT NOT NULL, output_name TEXT, result_json TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         db.commit()
 
 
@@ -331,6 +334,132 @@ def get_studio_media(media_id: str):
     if not path.is_file():
         raise HTTPException(410, "Generated media file is no longer available.")
     return FileResponse(path, media_type=row["content_type"], filename=row["filename"])
+
+
+class CompositionClip(BaseModel):
+    media_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    duration: float = Field(gt=0, le=600)
+    source_in: float = Field(default=0, ge=0)
+    source_out: float | None = Field(default=None, gt=0)
+
+
+class StudioCompositionRequest(BaseModel):
+    clips: list[CompositionClip] = Field(min_length=1, max_length=100)
+    audio_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    width: int = Field(default=1080, ge=320, le=3840)
+    height: int = Field(default=1920, ge=320, le=3840)
+    preset: Literal["veryfast", "medium", "slow", "veryslow"] = "slow"
+    crf: int = Field(default=18, ge=16, le=28)
+
+
+def _render_output_dir() -> Path:
+    path = Path(os.getenv("GOFLOW_DATA_DIR", Path(__file__).parent / "data")).resolve() / "studio_renders"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _studio_media_record(media_id: str) -> dict:
+    with _connect() as db:
+        row = db.execute("SELECT * FROM studio_media WHERE id = ?", (media_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Studio media was not found.")
+    root = _studio_output_dir().resolve()
+    path = (root / row["stored_name"]).resolve()
+    if not path.is_file() or path.parent != root:
+        raise HTTPException(410, "Studio media file is unavailable.")
+    return {**dict(row), "path": path}
+
+
+def _run_studio_composition(render_id: str, payload: dict) -> None:
+    output_name = render_id + ".mp4"
+    output_path = _render_output_dir() / output_name
+    try:
+        resolved = []
+        for clip in payload["clips"]:
+            asset = _studio_media_record(clip["media_id"])
+            if asset["media_type"] not in {"image", "video"}:
+                raise ValueError("Only image and video assets can be placed on the timeline.")
+            resolved.append({"path": asset["path"], "media_type": asset["media_type"],
+                             "duration": clip["duration"], "source_in": clip["source_in"],
+                             "source_out": clip.get("source_out")})
+        audio_path = None
+        if payload.get("audio_media_id"):
+            audio = _studio_media_record(payload["audio_media_id"])
+            if audio["media_type"] != "audio":
+                raise ValueError("The optional soundtrack must be an audio asset.")
+            audio_path = audio["path"]
+        with _connect() as db:
+            db.execute("UPDATE studio_renders SET status='processing', progress=10, updated_at=? WHERE id=?", (_now(), render_id))
+            db.commit()
+        result = compose_video(resolved, audio_path, output_path, width=payload["width"], height=payload["height"],
+                               preset=payload["preset"], crf=payload["crf"])
+        with _connect() as db:
+            db.execute("UPDATE studio_renders SET status='completed', progress=100, output_name=?, result_json=?, updated_at=? WHERE id=?",
+                       (output_name, json.dumps(result), _now(), render_id))
+            db.commit()
+    except Exception as exc:
+        output_path.unlink(missing_ok=True)
+        with _connect() as db:
+            db.execute("UPDATE studio_renders SET status='failed', progress=0, error=?, updated_at=? WHERE id=?",
+                       (str(exc)[:3000], _now(), render_id))
+            db.commit()
+
+
+@router.post("/studio/renders", status_code=202)
+def create_studio_render(payload: StudioCompositionRequest):
+    init_studio_db()
+    clip_rows = [clip.model_dump() for clip in payload.clips]
+    for clip in clip_rows:
+        asset = _studio_media_record(clip["media_id"])
+        if asset["media_type"] not in {"image", "video"}:
+            raise HTTPException(422, "Timeline clips must reference image or video assets.")
+        if clip.get("source_out") is not None and clip["source_out"] <= clip["source_in"]:
+            raise HTTPException(422, "Video source-out must be greater than source-in.")
+    if payload.audio_media_id:
+        audio = _studio_media_record(payload.audio_media_id)
+        if audio["media_type"] != "audio":
+            raise HTTPException(422, "audio_media_id must reference an audio asset.")
+    render_id = uuid.uuid4().hex
+    now = _now()
+    request_data = payload.model_dump()
+    with _connect() as db:
+        db.execute("INSERT INTO studio_renders (id,status,progress,request_json,created_at,updated_at) VALUES (?, 'queued',0,?,?,?)",
+                   (render_id, json.dumps(request_data), now, now))
+        db.commit()
+    threading.Thread(target=_run_studio_composition, args=(render_id, request_data),
+                     name="goflow-studio-render-" + render_id[:8], daemon=True).start()
+    return {"render_id": render_id, "status": "queued", "status_url": "/api/v1/studio/renders/" + render_id}
+
+
+@router.get("/studio/renders/{render_id}")
+def studio_render_status(render_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", render_id):
+        raise HTTPException(422, "Invalid render id.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute("SELECT * FROM studio_renders WHERE id=?", (render_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Studio render not found.")
+    result = dict(row)
+    if result.get("result_json"):
+        result["result"] = json.loads(result.pop("result_json"))
+    else:
+        result.pop("result_json", None)
+    if result.get("output_name"):
+        result["output_url"] = "/api/v1/studio/renders/" + render_id + "/output"
+    return result
+
+
+@router.get("/studio/renders/{render_id}/output")
+def studio_render_output(render_id: str):
+    status = studio_render_status(render_id)
+    if status["status"] != "completed" or not status.get("output_name"):
+        raise HTTPException(409, "Studio render is not complete.")
+    root = _render_output_dir().resolve()
+    path = (root / status["output_name"]).resolve()
+    if path.parent != root or not path.is_file():
+        raise HTTPException(410, "Rendered video is unavailable.")
+    return FileResponse(path, media_type="video/mp4", filename="goflow-" + render_id[:8] + ".mp4")
 
 
 @router.get("/studio/comfy/jobs/{prompt_id}")
