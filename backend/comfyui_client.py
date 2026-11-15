@@ -86,3 +86,29 @@ def upload_image(filename: str, content_type: str, data: bytes) -> dict[str, str
     if ".." in image_ref.split("/"):
         raise ComfyUIError("ComfyUI returned an unsafe image path.")
     return {"image_ref": image_ref, "name": name, "subfolder": subfolder, "type": result.get("type", "input")}
+
+
+def download_output(filename: str, subfolder: str = "", output_type: str = "output") -> tuple[bytes, str]:
+    """Download a ComfyUI output using validated view parameters, never a browser URL."""
+    if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,180}", filename) or filename in {".", ".."}:
+        raise ValueError("Invalid ComfyUI output filename.")
+    if not isinstance(subfolder, str) or (subfolder and (
+        len(subfolder) > 180 or not re.fullmatch(r"[A-Za-z0-9_./-]+", subfolder)
+        or any(part in {"", ".", ".."} for part in subfolder.split("/"))
+    )):
+        raise ValueError("Invalid ComfyUI output subfolder.")
+    if output_type not in {"output", "temp"}:
+        raise ValueError("Only ComfyUI output and temporary media are supported.")
+    try:
+        with _client() as client:
+            response = client.get(
+                f"{base_url()}/view",
+                params={"filename": filename, "subfolder": subfolder, "type": output_type},
+                timeout=httpx.Timeout(30.0, read=300.0),
+            )
+            response.raise_for_status()
+            if len(response.content) > 500 * 1024 * 1024:
+                raise ComfyUIError("ComfyUI output exceeds the 500 MB import limit.")
+            return response.content, response.headers.get("content-type", "application/octet-stream")
+    except httpx.HTTPError as exc:
+        raise ComfyUIError(f"Could not download ComfyUI output: {exc}") from exc
