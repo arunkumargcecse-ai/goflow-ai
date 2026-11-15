@@ -27,6 +27,7 @@ from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_
 from studio_composer import compose_video
 from local_tts import available_engines as local_tts_engines, synthesize_speech
 from reference_video import ReferenceVideoError, inspect_reference_video
+from reference_analysis import ReferenceAnalysisError, analyze_reference_video
 
 router = APIRouter()
 
@@ -278,6 +279,49 @@ async def upload_comfy_reference_video(file: UploadFile = File(...)):
     except ComfyUIError as exc:
         raise HTTPException(503, str(exc)) from exc
     return {"provider": "comfyui", **uploaded}
+
+
+@router.post("/studio/reference-videos/{media_id}/analyze")
+def analyze_stored_reference_video(media_id: str):
+    """Extract representative frames and detect candidate scene cuts locally."""
+    if not re.fullmatch(r"[a-f0-9]{32}", media_id):
+        raise HTTPException(422, "Invalid media id.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute("SELECT * FROM studio_media WHERE id = ?", (media_id,)).fetchone()
+    if not row or row["media_type"] != "video":
+        raise HTTPException(404, "Reference video not found.")
+    source = _studio_output_dir() / row["stored_name"]
+    if not source.is_file():
+        raise HTTPException(410, "Reference video file is no longer available.")
+    analysis_id = uuid.uuid4().hex
+    frame_dir = _studio_output_dir() / "reference-analysis" / analysis_id
+    try:
+        result = analyze_reference_video(source, frame_dir, max_frames=12)
+    except ReferenceAnalysisError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {
+        "analysis_id": analysis_id,
+        "reference_media_id": media_id,
+        **result,
+        "frames": [
+            {**frame, "url": f"/api/v1/studio/reference-videos/analysis/{analysis_id}/{frame['filename']}"}
+            for frame in result["frames"]
+        ],
+    }
+
+
+@router.get("/studio/reference-videos/analysis/{analysis_id}/{filename}")
+def get_reference_analysis_frame(analysis_id: str, filename: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\\.jpg", filename):
+        raise HTTPException(422, "Invalid analysis frame path.")
+    path = (_studio_output_dir() / "reference-analysis" / analysis_id / filename).resolve()
+    root = (_studio_output_dir() / "reference-analysis").resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(404, "Reference analysis frame not found.")
+    return FileResponse(path, media_type="image/jpeg", filename=filename)
 
 
 @router.post("/studio/reference-videos/inspect", status_code=201)
