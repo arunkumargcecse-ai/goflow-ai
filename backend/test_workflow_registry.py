@@ -83,6 +83,24 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
         with self.assertRaises(WorkflowRegistryError):
             build_workflow_prompt("sample-image", {})
 
+    def test_imported_freefield_apps_are_locally_runnable_and_keep_license_metadata(self):
+        for workflow_id in ("create-image", "sfx", "music"):
+            form = get_workflow_form(workflow_id)
+            self.assertTrue(form["ready"])
+            self.assertTrue(form["models"])
+            self.assertTrue(all(model.get("license") for model in form["models"]))
+            graph, manifest = build_workflow_prompt(workflow_id, {})
+            self.assertTrue(graph)
+            self.assertEqual(manifest["id"], workflow_id)
+
+    def test_imported_create_image_applies_vertical_aspect_option_sets(self):
+        graph, _ = build_workflow_prompt(
+            "create-image",
+            {"prompt": "A cinematic rainy street", "aspect": "9:16", "resolution": 1},
+        )
+        self.assertEqual(graph["18:6"]["inputs"]["width"], 768)
+        self.assertEqual(graph["18:6"]["inputs"]["height"], 1344)
+
     def test_rejects_path_traversal_and_unready_apps(self):
         with self.assertRaises(WorkflowRegistryError):
             get_workflow_form("../sample-image")
