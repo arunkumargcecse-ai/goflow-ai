@@ -235,6 +235,9 @@ def _studio_output_dir() -> Path:
 
 
 def _import_comfy_outputs(prompt_id: str, outputs: dict) -> list[dict]:
+    # Job history can be queried before any Studio generation has initialized its tables.
+    # Ensure the media index exists before idempotency lookups or inserts.
+    init_studio_db()
     allowed = {
         ".png": ("image", "image/png"), ".jpg": ("image", "image/jpeg"),
         ".jpeg": ("image", "image/jpeg"), ".webp": ("image", "image/webp"),
