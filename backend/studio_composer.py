@@ -22,9 +22,9 @@ def _image_motion_filter(index: int, duration: float, width: int, height: int, m
     if motion == "static":
         return prefix + f",fps=30,format=yuv420p[v{index}]"
     if motion == "zoom_in":
-        zoom, x, y = "min(1+on*0.08/frames,1.08)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        zoom, x, y = f"min(1+on*0.08/{frames},1.08)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
     elif motion == "zoom_out":
-        zoom, x, y = "max(1.08-on*0.08/frames,1)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
+        zoom, x, y = f"max(1.08-on*0.08/{frames},1)", "iw/2-(iw/zoom/2)", "ih/2-(ih/zoom/2)"
     elif motion == "pan_left":
         zoom, x, y = "1.08", f"(iw-iw/zoom)*on/{frames}", "ih/2-(ih/zoom/2)"
     else:
