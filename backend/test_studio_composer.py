@@ -14,7 +14,7 @@ class ImageMotionFilterTests(unittest.TestCase):
             with self.subTest(preset=preset):
                 value = _image_motion_filter(0, 2.0, 360, 640, preset)
                 self.assertIn("[0:v]", value)
-                self.assertIn("360x640", value)
+                self.assertIn("scale=360:640", value)
                 if preset == "static":
                     self.assertNotIn("zoompan", value)
                 else:
