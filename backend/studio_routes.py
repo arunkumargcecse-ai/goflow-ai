@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
 from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit
-from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
+from story_engine import StoryPlanRequest, create_story_plan as build_story_plan\nfrom workflow_catalog import list_workflows
 
 router = APIRouter()
 
@@ -101,7 +101,7 @@ def get_generation(generation_id: str):
     return record
 
 
-@router.get("/studio/providers")
+@router.get("/studio/workflows")\ndef studio_workflows(category: Literal["image", "video", "audio"] | None = None):\n    """List curated workflow templates and their explicit readiness/licensing state."""\n    return list_workflows(category)\n\n\n@router.get("/studio/providers")
 def studio_providers():
     return {
         "budget_mode": "zero_cost",
