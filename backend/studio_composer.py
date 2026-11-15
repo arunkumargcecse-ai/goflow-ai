@@ -47,8 +47,9 @@ def compose_video(
             if end is not None and float(end) <= start:
                 raise ValueError("Video source-out must be greater than source-in.")
             command += ["-i", str(path)]
-            trim = f"trim=start={start}" + (f":end={float(end)}" if end is not None else f":duration={duration}")
-            video_filter = f"[{index}:v]"+trim+",setpts=PTS-STARTPTS"
+            if end is not None and float(end) - start < duration:
+                raise ValueError("Requested shot duration exceeds the selected video source range.")
+            video_filter = f"[{index}:v]trim=start={start}:duration={duration},setpts=PTS-STARTPTS"
         else:
             raise ValueError("Storyboard media must be an image or video.")
         video_filter += (
