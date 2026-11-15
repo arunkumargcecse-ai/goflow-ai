@@ -17,7 +17,7 @@ from typing import Literal
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from generation_providers import GenerationRequest, submit_generation
 from comfyui_client import ComfyUIError, download_output as comfy_download_output, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image, upload_video as comfy_upload_video, inspect_wan_animate_readiness
@@ -65,6 +65,7 @@ def init_studio_db() -> None:
                 created_at TEXT NOT NULL
             )
         """)
+        db.execute("CREATE TABLE IF NOT EXISTS studio_reference_shot_maps (id TEXT PRIMARY KEY, reference_media_id TEXT NOT NULL, map_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         db.execute("CREATE TABLE IF NOT EXISTS studio_renders (id TEXT PRIMARY KEY, status TEXT NOT NULL, progress INTEGER NOT NULL, request_json TEXT NOT NULL, output_name TEXT, result_json TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         db.commit()
 
@@ -279,6 +280,65 @@ async def upload_comfy_reference_video(file: UploadFile = File(...)):
     except ComfyUIError as exc:
         raise HTTPException(503, str(exc)) from exc
     return {"provider": "comfyui", **uploaded}
+
+
+class ReferenceShot(BaseModel):
+    analysis_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    frame_filename: str = Field(pattern=r"^frame-[0-9]{2}\.jpg$")
+    timestamp_seconds: float = Field(ge=0, le=180)
+    title: str = Field(default="Shot", min_length=1, max_length=120)
+    duration_seconds: float = Field(default=3, gt=0, le=60)
+    camera_direction: str = Field(default="Static", max_length=160)
+    visual_notes: str = Field(default="", max_length=1000)
+    generation_prompt: str = Field(default="", max_length=2000)
+    character_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+
+
+class ReferenceShotMapRequest(BaseModel):
+    shots: list[ReferenceShot] = Field(min_length=1, max_length=12)
+
+
+@router.post("/studio/reference-videos/{media_id}/shot-map", status_code=201)
+def save_reference_shot_map(media_id: str, payload: ReferenceShotMapRequest):
+    """Persist an editable shot-by-shot recreation plan for an inspected video."""
+    if not re.fullmatch(r"[a-f0-9]{32}", media_id):
+        raise HTTPException(422, "Invalid reference media id.")
+    init_studio_db()
+    with _connect() as db:
+        reference = db.execute("SELECT * FROM studio_media WHERE id = ? AND media_type = 'video'", (media_id,)).fetchone()
+        if not reference:
+            raise HTTPException(404, "Reference video not found.")
+        analysis_root = (_studio_output_dir() / "reference-analysis").resolve()
+        for shot in payload.shots:
+            frame_path = analysis_root / shot.analysis_id / shot.frame_filename
+            if not frame_path.is_file() or analysis_root not in frame_path.resolve().parents:
+                raise HTTPException(422, f"Reference frame {shot.frame_filename} does not exist.")
+            if shot.character_media_id:
+                character = db.execute("SELECT media_type FROM studio_media WHERE id = ?", (shot.character_media_id,)).fetchone()
+                if not character or character["media_type"] != "image":
+                    raise HTTPException(422, "Character media must reference an imported Studio image.")
+        now = _now()
+        map_id = uuid.uuid4().hex
+        map_data = {"map_id": map_id, "reference_media_id": media_id,
+                    "shots": [shot.model_dump() for shot in payload.shots]}
+        db.execute(
+            "INSERT INTO studio_reference_shot_maps (id, reference_media_id, map_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (map_id, media_id, json.dumps(map_data), now, now),
+        )
+        db.commit()
+    return map_data
+
+
+@router.get("/studio/reference-videos/shot-maps/{map_id}")
+def get_reference_shot_map(map_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", map_id):
+        raise HTTPException(422, "Invalid shot map id.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute("SELECT map_json FROM studio_reference_shot_maps WHERE id = ?", (map_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Reference shot map not found.")
+    return json.loads(row["map_json"])
 
 
 @router.post("/studio/reference-videos/{media_id}/analyze")
