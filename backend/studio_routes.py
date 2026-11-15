@@ -284,7 +284,7 @@ async def upload_comfy_reference_video(file: UploadFile = File(...)):
 
 class ReferenceShot(BaseModel):
     analysis_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    frame_filename: str = Field(pattern=r"^frame-[0-9]{2}\\.jpg$")
+    frame_filename: str = Field(pattern=r"^frame-[0-9]{2}\.jpg$")
     timestamp_seconds: float = Field(ge=0, le=180)
     title: str = Field(default="Shot", min_length=1, max_length=120)
     duration_seconds: float = Field(default=3, gt=0, le=60)
