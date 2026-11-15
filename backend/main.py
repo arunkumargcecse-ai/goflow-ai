@@ -406,6 +406,60 @@ def job_status(job_id: str, _authorized: None = Depends(require_api_key)):
     return job
 
 
+@app.get("/api/v1/jobs/{job_id}/quality")
+def job_quality(job_id: str, _authorized: None = Depends(require_api_key)):
+    """Probe a completed render and report explicit technical quality gates."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    if job["status"] != "completed" or not job.get("output_name"):
+        raise HTTPException(409, "Quality checks are available after rendering completes.")
+    path = OUTPUT_DIR / job["output_name"]
+    if not path.is_file():
+        raise HTTPException(410, "Rendered output is no longer available.")
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise HTTPException(503, "ffprobe is required for media quality checks.")
+    probe = subprocess.run(
+        [ffprobe, "-v", "error", "-show_entries",
+         "format=duration,format_name:stream=codec_type,codec_name,width,height",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    if probe.returncode != 0:
+        raise HTTPException(422, "ffprobe could not read the rendered media.")
+    metadata = json.loads(probe.stdout)
+    streams = metadata.get("streams", [])
+    video = next((item for item in streams if item.get("codec_type") == "video"), {})
+    audio = next((item for item in streams if item.get("codec_type") == "audio"), None)
+    duration = float(metadata.get("format", {}).get("duration") or 0)
+    request = job["request"]
+    expected_width = request["output_width"]
+    expected_height = request["output_height"]
+    checks = [
+        {"name": "file_exists", "passed": path.stat().st_size > 0, "required": True},
+        {"name": "video_stream", "passed": bool(video), "required": True},
+        {"name": "duration_positive", "passed": duration > 0, "required": True, "actual": duration},
+        {"name": "resolution", "passed": video.get("width") == expected_width and video.get("height") == expected_height,
+         "required": True, "expected": f"{expected_width}x{expected_height}",
+         "actual": f"{video.get('width', 0)}x{video.get('height', 0)}"},
+        {"name": "h264_video", "passed": video.get("codec_name") == "h264", "required": True,
+         "actual": video.get("codec_name")},
+        {"name": "audio_stream", "passed": bool(audio), "required": False,
+         "actual": audio.get("codec_name") if audio else None},
+        {"name": "mp4_container", "passed": "mp4" in str(metadata.get("format", {}).get("format_name", "")),
+         "required": True, "actual": metadata.get("format", {}).get("format_name")},
+    ]
+    required_passed = all(item["passed"] for item in checks if item["required"])
+    warnings = [item["name"] for item in checks if not item["passed"] and not item["required"]]
+    return {
+        "job_id": job_id, "passed": required_passed, "status": "passed" if required_passed else "failed",
+        "duration_seconds": duration, "width": video.get("width"), "height": video.get("height"),
+        "video_codec": video.get("codec_name"), "audio_codec": audio.get("codec_name") if audio else None,
+        "file_size_bytes": path.stat().st_size, "checks": checks, "warnings": warnings,
+    }
+
+
 @app.get("/api/v1/jobs/{job_id}/output")
 def job_output(job_id: str, _authorized: None = Depends(require_api_key)):
     job = get_job(job_id)
