@@ -25,6 +25,7 @@ from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
 from studio_composer import compose_video
+from local_tts import available_engines as local_tts_engines, synthesize_speech
 
 router = APIRouter()
 
@@ -170,9 +171,9 @@ def studio_providers():
         "image": {"available": False, "mode": "mock", "creates_media": False},
         "video": {"available": False, "mode": "mock", "creates_media": False},
         "voice": {
-            "available": bool(_which("piper") or _which("espeak-ng") or _which("espeak")),
-            "local_engines": [name for name in ("piper", "espeak-ng", "espeak") if _which(name)],
-            "note": "Local voice engines require a separately installed Tamil voice model.",
+            "available": any(item["ready"] for item in local_tts_engines().values()),
+            "engines": local_tts_engines(),
+            "note": "Voice generation runs locally. Piper needs a configured local model; eSpeak needs its Tamil voice installed.",
         },
         "youtube": {
             "available": False,
@@ -188,6 +189,53 @@ def _which(command: str) -> str | None:
 
 
 init_studio_db()
+
+
+class LocalVoiceoverRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=5000)
+    engine: Literal["auto", "piper", "espeak"] = "auto"
+    voice: str = Field(default="ta", min_length=1, max_length=80)
+    speed: int = Field(default=145, ge=80, le=250)
+
+
+@router.post("/studio/voiceovers", status_code=201)
+def create_local_voiceover(payload: LocalVoiceoverRequest):
+    """Synthesize narration to a local WAV file and register it in Studio media."""
+    init_studio_db()
+    media_id = uuid.uuid4().hex
+    filename = f"voiceover-{media_id[:8]}.wav"
+    stored_name = media_id + ".wav"
+    destination = _studio_output_dir() / stored_name
+    try:
+        result = synthesize_speech(
+            payload.text, destination, engine=payload.engine,
+            voice=payload.voice, speed=payload.speed,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    now = _now()
+    try:
+        with _connect() as db:
+            db.execute(
+                """INSERT INTO studio_media
+                (id, filename, stored_name, media_type, content_type, size_bytes, source_prompt_id, created_at)
+                VALUES (?, ?, ?, 'audio', 'audio/wav', ?, 'local-tts', ?)""",
+                (media_id, filename, stored_name, result["size_bytes"], now),
+            )
+            db.commit()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return {
+        "media_id": media_id,
+        "filename": filename,
+        "media_type": "audio",
+        "url": f"/api/v1/studio/media/{media_id}",
+        **result,
+    }
+
 
 class ComfyWorkflowSubmission(BaseModel):
     workflow: dict = Field(min_length=1, max_length=1000)
