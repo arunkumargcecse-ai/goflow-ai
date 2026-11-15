@@ -1,8 +1,6 @@
 # Local ComfyUI workflow manifests
 
-goflow.ai can expose a locally installed, Freefield-compatible app manifest as a
-Creator Studio form and submit its bound API graph to the configured local
-ComfyUI instance.
+goflow.ai includes three pinned Freefield app manifests and API graphs (Create Image, Sound Effects, and Music). It can also expose additional locally installed, Freefield-compatible app manifests as Creator Studio forms and submit their bound API graphs to the configured local ComfyUI instance.
 
 ## Install a workflow
 
@@ -36,12 +34,12 @@ Example input:
 The referenced node and input field must exist in the API graph. Numeric
 inputs can declare `min` and `max`; select inputs can declare allowed
 `options`. The current runner supports text, textarea, number, slider,
-select, toggle, and seed controls. File uploads, image/video/audio inputs,
+select (including numeric option values and option-driven graph settings), toggle, and seed controls. File uploads, image/video/audio inputs,
 multi-select modes, and presets are not yet supported by this runner.
 
 ## API
 
-All routes use the normal goflow API-key authentication:
+The catalogue endpoint includes a `local_workflows` list containing only installed apps whose manifests and graph bindings validate. All routes use the normal goflow API-key authentication:
 
 - `GET /api/v1/studio/workflows/{workflow_id}` returns the validated form,
   declared outputs, model license metadata, custom-node requirements, and VRAM
@@ -67,3 +65,19 @@ A ComfyUI graph and its custom nodes are executable code. Install only
 workflows and custom nodes you trust, pin and review their source, and verify
 each model's license before downloading or using its weights. A Freefield
 repository license does not automatically license third-party model weights.
+
+
+## Bundled Freefield workflows
+
+The repository pins Freefield at commit
+`f0c2358a46c7008ff8503d4324b6cc8bc7657e75` and includes:
+
+- `create-image` — gated FLUX 3 Image Klein image generation.
+- `sfx` — Stable Audio 3 sound effects.
+- `music` — MiniMax Music 3 music generation.
+
+See [workflow provenance and model licensing](../backend/workflows/UPSTREAM.md).
+Only manifests and workflow JSON are included. Model weights are not included
+or downloaded. Create Image requires acceptance of the FLUX Kommunity License;
+the audio models have their own community licenses. These are large workflows
+and are not confirmed to fit the user's laptop until GPU/VRAM is checked.
