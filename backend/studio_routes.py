@@ -369,6 +369,7 @@ class CompositionClip(BaseModel):
     duration: float = Field(gt=0, le=600)
     source_in: float = Field(default=0, ge=0)
     source_out: float | None = Field(default=None, gt=0)
+    motion: Literal["static", "zoom_in", "zoom_out", "pan_left", "pan_right"] = "zoom_in"
 
 
 class StudioCompositionRequest(BaseModel):
@@ -409,7 +410,7 @@ def _run_studio_composition(render_id: str, payload: dict) -> None:
                 raise ValueError("Only image and video assets can be placed on the timeline.")
             resolved.append({"path": asset["path"], "media_type": asset["media_type"],
                              "duration": clip["duration"], "source_in": clip["source_in"],
-                             "source_out": clip.get("source_out")})
+                             "source_out": clip.get("source_out"), "motion": clip.get("motion", "zoom_in")})
         audio_path = None
         if payload.get("audio_media_id"):
             audio = _studio_media_record(payload["audio_media_id"])
