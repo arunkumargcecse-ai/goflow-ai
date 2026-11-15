@@ -309,7 +309,11 @@ async function renderReferenceShotMap(){
   const payload={shots:currentReferenceShots.map(s=>({analysis_id:currentReferenceAnalysis.analysis_id,frame_filename:s.filename,timestamp_seconds:s.timestamp_seconds,title:s.title,duration_seconds:s.duration_seconds,camera_direction:s.camera_direction,visual_notes:s.visual_notes,generation_prompt:s.generation_prompt,character_id:s.character_id||null}))};
   const saved=await studioApi('/studio/reference-videos/'+encodeURIComponent(currentReferenceMediaId)+'/shot-map',{method:'POST',body:JSON.stringify(payload)});
   window.currentReferenceShotMapId=saved.map_id;status.textContent='Queueing local FFmpeg render…';
-  const job=await studioApi('/studio/reference-videos/shot-maps/'+encodeURIComponent(saved.map_id)+'/render',{method:'POST',body:JSON.stringify({width:720,height:1280,preset:'veryfast',crf:22})});
+  const shotAudioTracks=[
+   $('studioVoiceTrack').value?{media_id:$('studioVoiceTrack').value,start_seconds:0,volume:1,loop:false}:null,
+   $('studioAudioTrack').value?{media_id:$('studioAudioTrack').value,start_seconds:0,volume:0.18,loop:true}:null
+  ].filter(Boolean);
+  const job=await studioApi('/studio/reference-videos/shot-maps/'+encodeURIComponent(saved.map_id)+'/render',{method:'POST',body:JSON.stringify({width:720,height:1280,preset:'veryfast',crf:22,audio_tracks:shotAudioTracks})});
   status.textContent='Render '+job.render_id+' · '+job.status;
   for(let attempt=0;attempt<180;attempt++){
    await new Promise(resolve=>setTimeout(resolve,2000));
