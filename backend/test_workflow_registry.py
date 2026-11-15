@@ -31,6 +31,14 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
                  "bind": [{"node": "1", "field": "text"}]},
                 {"id": "steps", "type": "number", "label": "Steps", "default": 20,
                  "min": 1, "max": 50, "bind": [{"node": "1", "field": "steps"}]},
+                {"id": "resolution", "type": "select", "label": "Resolution", "default": 1,
+                 "options": [{"value": 1, "label": "1K"}, {"value": 2, "label": "2K"}],
+                 "bind": [{"node": "1", "field": "resolution"}]},
+                {"id": "aspect", "type": "select", "label": "Aspect", "default": "1:1",
+                 "options": [{"value": "9:16", "label": "Vertical", "sets": [
+                     {"node": "2", "field": "width", "value": 768},
+                     {"node": "2", "field": "height", "value": 1344}
+                 ]}]},
             ],
             "outputs": [{"node": "2", "type": "image"}],
             "models": [{"repo": "example/model", "file": "model.safetensors",
@@ -40,7 +48,7 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
         }
         graph = {
             "1": {"class_type": "TestSampler", "inputs": {"text": "", "steps": 1}},
-            "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0]}},
+            "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0], "width": 1024, "height": 1024}},
         }
         (app / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
         (app / "workflow.api.json").write_text(json.dumps(graph), encoding="utf-8")
@@ -59,7 +67,11 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
         graph, manifest = build_workflow_prompt("sample-image", {"prompt": "rainy street"})
         self.assertEqual(graph["1"]["inputs"]["text"], "rainy street")
         self.assertEqual(graph["1"]["inputs"]["steps"], 20)
+        self.assertEqual(graph["1"]["inputs"]["resolution"], 1)
         self.assertEqual(manifest["id"], "sample-image")
+        vertical, _ = build_workflow_prompt("sample-image", {"prompt": "rainy street", "aspect": "9:16"})
+        self.assertEqual(vertical["2"]["inputs"]["width"], 768)
+        self.assertEqual(vertical["2"]["inputs"]["height"], 1344)
 
     def test_rejects_unknown_inputs_and_out_of_range_values(self):
         with self.assertRaises(WorkflowRegistryError):
@@ -70,6 +82,24 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
     def test_rejects_missing_required_input(self):
         with self.assertRaises(WorkflowRegistryError):
             build_workflow_prompt("sample-image", {})
+
+    def test_imported_freefield_apps_are_locally_runnable_and_keep_license_metadata(self):
+        for workflow_id in ("create-image", "sfx", "music"):
+            form = get_workflow_form(workflow_id)
+            self.assertTrue(form["ready"])
+            self.assertTrue(form["models"])
+            self.assertTrue(all(model.get("license") for model in form["models"]))
+            graph, manifest = build_workflow_prompt(workflow_id, {})
+            self.assertTrue(graph)
+            self.assertEqual(manifest["id"], workflow_id)
+
+    def test_imported_create_image_applies_vertical_aspect_option_sets(self):
+        graph, _ = build_workflow_prompt(
+            "create-image",
+            {"prompt": "A cinematic rainy street", "aspect": "9:16", "resolution": 1},
+        )
+        self.assertEqual(graph["18:6"]["inputs"]["width"], 768)
+        self.assertEqual(graph["18:6"]["inputs"]["height"], 1344)
 
     def test_rejects_path_traversal_and_unready_apps(self):
         with self.assertRaises(WorkflowRegistryError):

@@ -106,6 +106,14 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual({item["category"] for item in response.json()["workflows"]}, {"video"})
 
+    def test_workflow_catalog_lists_imported_local_apps(self):
+        response = self.client.get("/api/v1/studio/workflows", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["local_count"], 3)
+        self.assertEqual({item["id"] for item in payload["local_workflows"]},
+                         {"create-image", "sfx", "music"})
+
     @patch("studio_routes.get_workflow_form")
     def test_local_workflow_form_returns_manifest_fields(self, get_form):
         get_form.return_value = {"id": "sample-image", "inputs": [{"id": "prompt"}], "ready": True}

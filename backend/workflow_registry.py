@@ -93,6 +93,36 @@ def _validate_manifest_bindings(manifest: dict[str, Any], graph: dict[str, Any])
             raise WorkflowRegistryError("Every declared output must reference an existing workflow node.")
 
 
+def list_local_workflows(section: str | None = None) -> list[dict[str, Any]]:
+    """List only local apps whose manifests and API graphs validate."""
+    root = workflow_root()
+    if not root.is_dir():
+        return []
+    entries: list[dict[str, Any]] = []
+    for manifest_path in sorted(root.glob("*/app.json")):
+        workflow_id = manifest_path.parent.name
+        try:
+            form = get_workflow_form(workflow_id)
+        except WorkflowRegistryError:
+            continue
+        if section and form["section"] != section:
+            continue
+        entries.append({
+            "id": form["id"],
+            "name": form["name"],
+            "section": form["section"],
+            "summary": form["summary"],
+            "ready": form["ready"],
+            "input_count": len(form["inputs"]),
+            "output_types": sorted({item.get("type") for item in form["outputs"]}),
+            "model_count": len(form["models"]),
+            "models": form["models"],
+            "vram": form["vram"],
+            "cost_mode": form["cost_mode"],
+        })
+    return entries
+
+
 def get_workflow_form(workflow_id: str) -> dict[str, Any]:
     manifest, _ = _read_app(workflow_id)
     return {

@@ -20,7 +20,7 @@ from generation_providers import GenerationRequest, submit_generation
 from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
-from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form
+from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
 
 router = APIRouter()
 
@@ -105,8 +105,12 @@ def get_generation(generation_id: str):
 
 @router.get("/studio/workflows")
 def studio_workflows(category: Literal["image", "video", "audio"] | None = None):
-    """List curated workflow templates and their explicit readiness/licensing state."""
-    return list_workflows(category)
+    """List curated templates plus validated locally installed workflows."""
+    catalogue = list_workflows(category)
+    local = list_local_workflows(category)
+    catalogue["local_workflows"] = local
+    catalogue["local_count"] = len(local)
+    return catalogue
 
 
 @router.get("/studio/workflows/{workflow_id}")
