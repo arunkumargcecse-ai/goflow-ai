@@ -738,7 +738,7 @@ def render_reference_shot_map(map_id: str, payload: ShotMapRenderRequest):
         else:
             analysis_id = shot.get("analysis_id", "")
             filename = shot.get("frame_filename", "")
-            if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\\.jpg", filename):
+            if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\.jpg", filename):
                 raise HTTPException(422, f"Shot {index} has an invalid reference frame.")
             frame_path = (analysis_root / analysis_id / filename).resolve()
             if analysis_root not in frame_path.parents or not frame_path.is_file():
