@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
-from comfyui_client import ComfyUIError, download_output as comfy_download_output, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image
+from comfyui_client import ComfyUIError, download_output as comfy_download_output, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image, upload_video as comfy_upload_video
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
@@ -211,6 +211,24 @@ async def upload_comfy_reference_image(file: UploadFile = File(...)):
         raise HTTPException(503, str(exc)) from exc
     return {"provider": "comfyui", **uploaded}
 
+
+
+@router.post("/studio/comfy/upload-video")
+async def upload_comfy_reference_video(file: UploadFile = File(...)):
+    """Upload an owned reference video to local ComfyUI input storage."""
+    content_type = (file.content_type or "").lower()
+    if content_type not in {"video/mp4", "video/webm", "video/quicktime"}:
+        raise HTTPException(415, "Only MP4, WebM, and QuickTime reference videos are supported.")
+    data = await file.read(100 * 1024 * 1024 + 1)
+    if len(data) > 100 * 1024 * 1024:
+        raise HTTPException(413, "Reference video exceeds the 100 MB limit.")
+    try:
+        uploaded = comfy_upload_video(file.filename or "reference-video.mp4", content_type, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ComfyUIError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"provider": "comfyui", **uploaded}
 
 @router.get("/studio/comfy/status")
 def comfy_status():

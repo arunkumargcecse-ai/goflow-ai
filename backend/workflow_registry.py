@@ -14,7 +14,7 @@ from typing import Any
 
 _ID = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _INPUT_ID = re.compile(r"^[a-z][a-z0-9_]*$")
-_SUPPORTED_INPUTS = {"text", "textarea", "number", "slider", "select", "toggle", "seed", "image"}
+_SUPPORTED_INPUTS = {"text", "textarea", "number", "slider", "select", "toggle", "seed", "image", "video"}
 
 
 class WorkflowRegistryError(ValueError):
@@ -161,12 +161,12 @@ def build_workflow_prompt(workflow_id: str, values: dict[str, Any]) -> tuple[dic
             raise WorkflowRegistryError(f"Input '{input_id}' must be numeric.")
         if kind == "toggle" and not isinstance(value, bool):
             raise WorkflowRegistryError(f"Input '{input_id}' must be boolean.")
-        if kind == "image" and (
+        if kind in {"image", "video"} and (
             not isinstance(value, str)
             or not re.fullmatch(r"[A-Za-z0-9_.-]{1,160}(?:/[A-Za-z0-9_.-]{1,160})?", value)
             or ".." in value.split("/")
         ):
-            raise WorkflowRegistryError(f"Input '{input_id}' must be a safe ComfyUI image_ref from the local upload endpoint.")
+            raise WorkflowRegistryError(f"Input '{input_id}' must be a safe ComfyUI {kind}_ref from the local upload endpoint.")
         if kind in {"number", "slider", "seed"}:
             if "min" in item and value < item["min"] or "max" in item and value > item["max"]:
                 raise WorkflowRegistryError(f"Input '{input_id}' is outside its allowed range.")
