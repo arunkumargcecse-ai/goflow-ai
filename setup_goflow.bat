@@ -39,7 +39,7 @@ if errorlevel 1 goto :failed
 if errorlevel 1 goto :failed
 
 if not exist ".env" (
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "$bytes=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Fill($bytes); $key=[Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_'); Set-Content -Encoding ASCII -Path '.env' -Value ('GOFLOW_API_KEY='+$key)"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "$rng=[Security.Cryptography.RandomNumberGenerator]::Create(); $bytes=New-Object byte[] 32; $rng.GetBytes($bytes); $rng.Dispose(); $key=[Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_'); Set-Content -Encoding ASCII -Path '.env' -Value ('GOFLOW_API_KEY='+$key)"
   if errorlevel 1 goto :failed
 )
 
