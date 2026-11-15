@@ -294,6 +294,7 @@ class ReferenceShot(BaseModel):
     visual_notes: str = Field(default="", max_length=1000)
     generation_prompt: str = Field(default="", max_length=2000)
     character_media_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    character_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
 
 
 class ReferenceShotMapRequest(BaseModel):
