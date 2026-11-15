@@ -13,11 +13,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
-from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit
+from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
@@ -179,6 +179,24 @@ init_studio_db()
 class ComfyWorkflowSubmission(BaseModel):
     workflow: dict = Field(min_length=1, max_length=1000)
     client_id: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/studio/comfy/upload-image")
+async def upload_comfy_reference_image(file: UploadFile = File(...)):
+    """Upload a reference image to the configured local ComfyUI input folder."""
+    content_type = (file.content_type or "").lower()
+    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(415, "Only PNG, JPEG, and WebP reference images are supported.")
+    data = await file.read(20 * 1024 * 1024 + 1)
+    if len(data) > 20 * 1024 * 1024:
+        raise HTTPException(413, "Reference image exceeds the 20 MB limit.")
+    try:
+        uploaded = comfy_upload_image(file.filename or "reference-image", content_type, data)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ComfyUIError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"provider": "comfyui", **uploaded}
 
 
 @router.get("/studio/comfy/status")

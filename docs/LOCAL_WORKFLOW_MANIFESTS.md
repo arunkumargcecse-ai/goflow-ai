@@ -34,8 +34,7 @@ Example input:
 The referenced node and input field must exist in the API graph. Numeric
 inputs can declare `min` and `max`; select inputs can declare allowed
 `options`. The current runner supports text, textarea, number, slider,
-select (including numeric option values and option-driven graph settings), toggle, and seed controls. File uploads, image/video/audio inputs,
-multi-select modes, and presets are not yet supported by this runner.
+select (including numeric option values and option-driven graph settings), toggle, seed, and image controls. Image inputs accept only safe `image_ref` values returned by the local upload endpoint. Video/audio inputs, multi-select modes, and presets are not yet supported by this runner.
 
 ## API
 
@@ -44,12 +43,13 @@ The catalogue endpoint includes a `local_workflows` list containing only install
 - `GET /api/v1/studio/workflows/{workflow_id}` returns the validated form,
   declared outputs, model license metadata, custom-node requirements, and VRAM
   metadata.
+- `POST /api/v1/studio/comfy/upload-image` accepts a multipart `file` field containing a PNG, JPEG, or WebP image (maximum 20 MB), uploads it to the configured local ComfyUI input directory, and returns an `image_ref` suitable for a manifest image input bound to a ComfyUI `LoadImage` node. The endpoint never accepts a ComfyUI URL from the browser.
 - `POST /api/v1/studio/workflows/{workflow_id}/run` accepts
   `{"values":{"prompt":"A cinematic rainy street"}}`, applies only declared
   manifest bindings to a copy of the trusted local graph, and submits it to
   ComfyUI.
 
-The browser cannot supply an arbitrary graph through this endpoint. Unknown
+The browser cannot supply an arbitrary graph through this endpoint. Uploaded references stay on the configured local ComfyUI instance; goflow.ai does not forward them to a paid provider. Unknown
 input keys, unsupported controls, invalid values, unresolved bindings, draft
 manifests, and path traversal are rejected. The existing low-level ComfyUI
 submit endpoint remains available for trusted administrator workflows.

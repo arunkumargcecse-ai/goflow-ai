@@ -72,6 +72,30 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
 
+    @patch("studio_routes.comfy_upload_image")
+    def test_comfy_reference_image_upload_returns_local_image_reference(self, upload):
+        upload.return_value = {"image_ref": "goflow/reference.png", "name": "reference.png", "subfolder": "goflow", "type": "input"}
+        response = self.client.post(
+            "/api/v1/studio/comfy/upload-image", headers=self.headers,
+            files={"file": ("reference.png", b"fake-png-bytes", "image/png")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["image_ref"], "goflow/reference.png")
+
+    def test_comfy_reference_image_upload_rejects_unsupported_media(self):
+        response = self.client.post(
+            "/api/v1/studio/comfy/upload-image", headers=self.headers,
+            files={"file": ("payload.txt", b"not-an-image", "text/plain")},
+        )
+        self.assertEqual(response.status_code, 415)
+
+    def test_comfy_reference_image_upload_requires_authentication(self):
+        response = self.client.post(
+            "/api/v1/studio/comfy/upload-image",
+            files={"file": ("reference.png", b"fake-png-bytes", "image/png")},
+        )
+        self.assertEqual(response.status_code, 401)
+
     @patch("studio_routes.comfy_submit")
     def test_comfy_workflow_submission_returns_prompt_id(self, submit):
         submit.return_value = {"prompt_id": "prompt-123"}
