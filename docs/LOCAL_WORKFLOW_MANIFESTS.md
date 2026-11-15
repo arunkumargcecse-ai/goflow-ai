@@ -43,6 +43,7 @@ The catalogue endpoint includes a `local_workflows` list containing only install
 - `GET /api/v1/studio/workflows/{workflow_id}` returns the validated form,
   declared outputs, model license metadata, custom-node requirements, and VRAM
   metadata.
+- Completed jobs expose `imported_media` entries. Supported image, video, GIF, and audio outputs are downloaded from the local ComfyUI `/view` endpoint, copied into the goflow data directory, and recorded in the Studio media library. Repeated status polls reuse the existing imported record. `GET /api/v1/studio/media/{media_id}` serves the stored file through the authenticated API.
 - `POST /api/v1/studio/comfy/upload-image` accepts a multipart `file` field containing a PNG, JPEG, or WebP image (maximum 20 MB), uploads it to the configured local ComfyUI input directory, and returns an `image_ref` suitable for a manifest image input bound to a ComfyUI `LoadImage` node. The endpoint never accepts a ComfyUI URL from the browser.
 - `POST /api/v1/studio/workflows/{workflow_id}/run` accepts
   `{"values":{"prompt":"A cinematic rainy street"}}`, applies only declared
