@@ -71,6 +71,27 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         response = self.client.get("/api/v1/generations/not-a-real-id")
         self.assertEqual(response.status_code, 401)
 
+
+    @patch("studio_routes.comfy_submit")
+    def test_comfy_workflow_submission_returns_prompt_id(self, submit):
+        submit.return_value = {"prompt_id": "prompt-123"}
+        response = self.client.post("/api/v1/studio/comfy/submit", headers=self.headers,
+            json={"workflow": {"1": {"class_type": "SaveImage", "inputs": {}}}})
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["prompt_id"], "prompt-123")
+
+    def test_comfy_workflow_submission_rejects_invalid_node_graph(self):
+        response = self.client.post("/api/v1/studio/comfy/submit", headers=self.headers,
+            json={"workflow": {"1": {"inputs": {}}}})
+        self.assertEqual(response.status_code, 422)
+
+    @patch("studio_routes.comfy_queue")
+    def test_comfy_status_reports_queue(self, queue):
+        queue.return_value = {"queue_running": [], "queue_pending": []}
+        response = self.client.get("/api/v1/studio/comfy/status", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["available"])
+
     def test_provider_capabilities_never_claim_mock_media_is_real(self):
         response = self.client.get("/api/v1/studio/providers", headers=self.headers)
         self.assertEqual(response.status_code, 200)

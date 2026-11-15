@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
+from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 
 router = APIRouter()
@@ -126,3 +127,40 @@ def _which(command: str) -> str | None:
 
 
 init_studio_db()
+
+class ComfyWorkflowSubmission(BaseModel):
+    workflow: dict = Field(min_length=1, max_length=1000)
+    client_id: str | None = Field(default=None, max_length=128)
+
+
+@router.get("/studio/comfy/status")
+def comfy_status():
+    try:
+        return {"available": True, "queue": comfy_queue()}
+    except ComfyUIError as exc:
+        return {"available": False, "error": str(exc)}
+
+
+@router.post("/studio/comfy/submit", status_code=202)
+def submit_comfy_workflow(payload: ComfyWorkflowSubmission):
+    try:
+        result = comfy_submit(payload.workflow, payload.client_id)
+    except (ComfyUIError, ValueError) as exc:
+        raise HTTPException(503 if isinstance(exc, ComfyUIError) else 422, str(exc)) from exc
+    return {"provider": "comfyui", "prompt_id": result["prompt_id"], "status": "queued",
+            "status_url": f"/api/v1/studio/comfy/jobs/{result['prompt_id']}",
+            "estimated_cost": "₹0 from goflow.ai; local hardware only (worker electricity/network costs may apply)"}
+
+
+@router.get("/studio/comfy/jobs/{prompt_id}")
+def comfy_job_status(prompt_id: str):
+    try:
+        history = comfy_history(prompt_id)
+    except (ComfyUIError, ValueError) as exc:
+        raise HTTPException(502 if isinstance(exc, ComfyUIError) else 422, str(exc)) from exc
+    record = history.get(prompt_id)
+    if not record:
+        return {"prompt_id": prompt_id, "status": "queued_or_running", "history": None}
+    execution = record.get("status", {})
+    return {"prompt_id": prompt_id, "status": "completed" if execution.get("completed") else "processing_or_failed",
+            "execution_status": execution, "outputs": record.get("outputs", {})}
