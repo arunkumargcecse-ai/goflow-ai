@@ -162,6 +162,46 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.json()["prompt_id"], "local-prompt-1")
         build_prompt.assert_called_once_with("sample-image", {"prompt": "A rainy street"})
 
+    @patch("studio_routes.comfy_download_output")
+    @patch("studio_routes.comfy_history")
+    def test_completed_comfy_outputs_are_imported_and_downloadable(self, history, download):
+        history.return_value = {
+            "prompt-output-1": {
+                "status": {"completed": True},
+                "outputs": {"9": {"images": [{"filename": "render.png", "subfolder": "", "type": "output"}]}},
+            }
+        }
+        download.return_value = (b"fake-image-bytes", "image/png")
+        status = self.client.get(
+            "/api/v1/studio/comfy/jobs/prompt-output-1", headers=self.headers
+        )
+        self.assertEqual(status.status_code, 200)
+        imported = status.json()["imported_media"]
+        self.assertEqual(len(imported), 1)
+        media = self.client.get(imported[0]["url"], headers=self.headers)
+        self.assertEqual(media.status_code, 200)
+        self.assertEqual(media.content, b"fake-image-bytes")
+        self.assertEqual(media.headers["content-type"], "image/png")
+
+    @patch("studio_routes.comfy_download_output")
+    @patch("studio_routes.comfy_history")
+    def test_comfy_output_import_is_idempotent_on_status_poll(self, history, download):
+        history.return_value = {
+            "prompt-output-2": {
+                "status": {"completed": True},
+                "outputs": {"9": {"images": [{"filename": "render.png", "subfolder": "", "type": "output"}]}},
+            }
+        }
+        download.return_value = (b"fake-image-bytes", "image/png")
+        first = self.client.get("/api/v1/studio/comfy/jobs/prompt-output-2", headers=self.headers)
+        second = self.client.get("/api/v1/studio/comfy/jobs/prompt-output-2", headers=self.headers)
+        self.assertEqual(first.json()["imported_media"][0]["media_id"], second.json()["imported_media"][0]["media_id"])
+        download.assert_called_once()
+
+    def test_generated_media_download_requires_authentication(self):
+        response = self.client.get("/api/v1/studio/media/" + "a" * 32)
+        self.assertEqual(response.status_code, 401)
+
     def test_provider_capabilities_never_claim_mock_media_is_real(self):
         response = self.client.get("/api/v1/studio/providers", headers=self.headers)
         self.assertEqual(response.status_code, 200)
