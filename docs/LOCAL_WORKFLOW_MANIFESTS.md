@@ -34,8 +34,7 @@ Example input:
 The referenced node and input field must exist in the API graph. Numeric
 inputs can declare `min` and `max`; select inputs can declare allowed
 `options`. The current runner supports text, textarea, number, slider,
-select (including numeric option values and option-driven graph settings), toggle, and seed controls. File uploads, image/video/audio inputs,
-multi-select modes, and presets are not yet supported by this runner.
+select (including numeric option values and option-driven graph settings), toggle, seed, and image controls. Image inputs accept only safe `image_ref` values returned by the local upload endpoint. Video/audio inputs, multi-select modes, and presets are not yet supported by this runner.
 
 ## API
 
