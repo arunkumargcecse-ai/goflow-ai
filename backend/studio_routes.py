@@ -20,6 +20,7 @@ from generation_providers import GenerationRequest, submit_generation
 from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
+from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form
 
 router = APIRouter()
 
@@ -106,6 +107,42 @@ def get_generation(generation_id: str):
 def studio_workflows(category: Literal["image", "video", "audio"] | None = None):
     """List curated workflow templates and their explicit readiness/licensing state."""
     return list_workflows(category)
+
+
+@router.get("/studio/workflows/{workflow_id}")
+def studio_workflow_form(workflow_id: str):
+    """Return a validated local manifest as a dynamic Creator Studio form."""
+    try:
+        return get_workflow_form(workflow_id)
+    except WorkflowRegistryError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+class LocalWorkflowRun(BaseModel):
+    values: dict = Field(default_factory=dict)
+    client_id: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/studio/workflows/{workflow_id}/run", status_code=202)
+def run_local_workflow(workflow_id: str, payload: LocalWorkflowRun):
+    """Build a graph from a trusted local manifest and submit it to local ComfyUI."""
+    try:
+        graph, manifest = build_workflow_prompt(workflow_id, payload.values)
+    except WorkflowRegistryError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        result = comfy_submit(graph, payload.client_id)
+    except (ComfyUIError, ValueError) as exc:
+        raise HTTPException(503 if isinstance(exc, ComfyUIError) else 422, str(exc)) from exc
+    return {
+        "provider": "comfyui",
+        "workflow_id": workflow_id,
+        "workflow_name": manifest.get("name", workflow_id),
+        "prompt_id": result["prompt_id"],
+        "status": "queued",
+        "status_url": f"/api/v1/studio/comfy/jobs/{result['prompt_id']}",
+        "estimated_cost": "₹0 from goflow.ai; local hardware only (worker electricity/network costs may apply)",
+    }
 
 
 @router.get("/studio/providers")
