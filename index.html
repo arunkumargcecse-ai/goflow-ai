@@ -56,6 +56,20 @@ label{color:#c5baff;font-size:11px;letter-spacing:.06em;text-transform:uppercase
 <div class="actions"><button class="btn primary" id="buildShotPromptsBtn" disabled>Build character-consistent shot prompts</button></div>
 <p class="muted" id="shotPromptStatus">Save a shot map first, then build prompts.</p>
 <p class="notice">Uploads go only to your configured local ComfyUI instance. Reference video limit: 100 MB. No cloud GPU, paid API or automatic model download is used.</p> Reference video limit: 100 MB. No cloud GPU, paid API or automatic model download is used.</p></div>
+<div class="card" id="localWorkflowRunner">
+ <h2>Local AI workflow runner</h2>
+ <p class="muted">Run installed ComfyUI API workflows on your own machine. Jobs are submitted to your configured local ComfyUI server, and completed outputs are imported into the Studio media library.</p>
+ <div class="actions"><button class="btn" id="refreshLocalWorkflows">Check ComfyUI &amp; workflows</button></div>
+ <p class="muted" id="localWorkflowStatus">Enter your backend URL and API key, then check local ComfyUI.</p>
+ <div id="localWorkflowHardware" class="notice">Local-only execution. Your Intel Iris Xe laptop is not suitable for the large FLUX, music or video model packs listed here. This panel does not download models or use cloud inference.</div>
+ <label for="localWorkflowSelect">Installed workflow</label><select id="localWorkflowSelect"><option value="">Check local workflows first</option></select>
+ <p class="muted" id="localWorkflowDescription"></p>
+ <div id="localWorkflowModels"></div>
+ <div id="localWorkflowInputs" class="grid"></div>
+ <div class="actions"><button class="btn primary" id="runLocalWorkflow" disabled>Run on local ComfyUI</button><button class="btn" id="refreshLocalJob" disabled>Refresh job status</button></div>
+ <p class="muted" id="localWorkflowJobStatus">No local generation job submitted.</p>
+ <div id="localWorkflowOutputs"></div>
+</div>
 <div class="card"><h2>Scene generation request</h2><p class="muted">Submit an image or video request for a selected storyboard scene. Mock mode only tests orchestration and does not create media.</p><div class="row"><div><label>Scene number</label><input id="generationSceneNumber" type="number" min="1" value="1"></div><div><label>Asset type</label><select id="generationMediaType"><option value="image">Image</option><option value="video">Video</option></select></div></div><div class="actions"><button class="btn primary" id="submitGenerationBtn">Submit generation request</button></div><p class="muted" id="generationStatus">No generation request submitted.</p></div>
 </section>
 <section id="visual-editor" class="pane hide">
@@ -317,6 +331,97 @@ $('uploadMotionInputs').onclick=async()=>{
  }catch(e){status.textContent='Upload failed: '+e.message}
  finally{btn.disabled=false}
 };
+let localWorkflowForms=[],activeLocalWorkflow=null,activeLocalPromptId=null,localWorkflowPollTimer=null;
+function renderLocalWorkflowInputs(form){
+ const root=$('localWorkflowInputs');root.innerHTML='';
+ (form.inputs||[]).forEach(item=>{
+  const wrap=document.createElement('div');wrap.className='card';
+  const label=document.createElement('label');label.textContent=item.label||item.id;label.htmlFor='localwf-'+item.id;wrap.appendChild(label);
+  let input;
+  if(item.type==='textarea'){input=document.createElement('textarea');input.value=item.default??''}
+  else if(item.type==='select'){input=document.createElement('select');(item.options||[]).forEach(option=>{const o=document.createElement('option');o.value=String(option.value);o.textContent=option.label||String(option.value);input.appendChild(o)});input.value=String(item.default??'')}
+  else if(item.type==='toggle'){input=document.createElement('input');input.type='checkbox';input.checked=Boolean(item.default)}
+  else if(item.type==='image'||item.type==='video'){input=document.createElement('input');input.type='file';input.accept=item.type==='image'?'image/png,image/jpeg,image/webp':'video/mp4,video/webm,video/quicktime'}
+  else{input=document.createElement('input');input.type='number';if(item.min!==undefined)input.min=item.min;if(item.max!==undefined)input.max=item.max;if(item.step!==undefined)input.step=item.step;input.value=item.default??0}
+  input.id='localwf-'+item.id;input.dataset.workflowInput=item.id;input.dataset.workflowType=item.type;input.dataset.defaultType=typeof item.default;
+  if(item.required)input.required=true;
+  wrap.appendChild(input);
+  if(item.help){const help=document.createElement('p');help.className='muted';help.textContent=item.help;wrap.appendChild(help)}
+  root.appendChild(wrap);
+ });
+ $('runLocalWorkflow').disabled=!(form.inputs||[]).length;
+}
+async function refreshLocalWorkflows(){
+ const button=$('refreshLocalWorkflows');button.disabled=true;$('localWorkflowStatus').textContent='Checking backend and local ComfyUI…';
+ try{
+  const [status,data]=await Promise.all([studioApi('/studio/comfy/status'),studioApi('/studio/workflows')]);
+  const workflows=data.local_workflows||[];localWorkflowForms=workflows;
+  const select=$('localWorkflowSelect');select.innerHTML='<option value="">Choose an installed workflow</option>'+workflows.map(w=>'<option value="'+escapeHtml(w.id)+'">'+escapeHtml(w.name)+'</option>').join('');
+  $('localWorkflowStatus').textContent=(status.available?'ComfyUI connected':'ComfyUI unavailable: '+(status.error||'not reachable'))+' · '+workflows.length+' validated local workflow(s) found.';
+  $('localWorkflowHardware').textContent='Execution is local-only and depends on installed model weights, custom nodes and compatible hardware. The FLUX 3 Image Klein pack alone lists multi-gigabyte weights; your Intel Iris Xe laptop is not a practical target for these heavy diffusion workflows. Use a compatible local GPU workstation. No model download or cloud request is triggered here.';
+  if(!workflows.length)$('localWorkflowStatus').textContent+=' No runnable local API workflows are installed.';
+  $('localWorkflowDescription').textContent='Select a workflow to inspect its inputs and model requirements.';
+  $('localWorkflowModels').innerHTML='';$('localWorkflowInputs').innerHTML='';$('runLocalWorkflow').disabled=true;
+ }catch(e){$('localWorkflowStatus').textContent='Could not load local workflows: '+e.message}
+ finally{button.disabled=false}
+}
+$('refreshLocalWorkflows').onclick=refreshLocalWorkflows;
+$('localWorkflowSelect').onchange=async()=>{
+ const id=$('localWorkflowSelect').value;if(!id){activeLocalWorkflow=null;$('localWorkflowInputs').innerHTML='';return}
+ $('localWorkflowStatus').textContent='Loading workflow form…';$('runLocalWorkflow').disabled=true;
+ try{
+  const form=await studioApi('/studio/workflows/'+encodeURIComponent(id));activeLocalWorkflow=form;
+  $('localWorkflowDescription').textContent=form.summary||form.name;
+  $('localWorkflowModels').innerHTML='<p class="muted">Models: '+(form.models||[]).map(m=>escapeHtml(m.file||m.repo||'model')+' ('+escapeHtml(m.gb??'?')+' GB)').join(' · ')+'</p>';
+  renderLocalWorkflowInputs(form);$('localWorkflowStatus').textContent='Workflow manifest and API graph validated. This does not verify model files or guarantee the workflow will fit available RAM/VRAM.';
+ }catch(e){$('localWorkflowStatus').textContent='Could not load workflow: '+e.message}
+};
+async function runSelectedLocalWorkflow(){
+ if(!activeLocalWorkflow)return;
+ const button=$('runLocalWorkflow');button.disabled=true;$('localWorkflowJobStatus').textContent='Preparing local workflow inputs…';$('localWorkflowOutputs').innerHTML='';
+ try{
+  const values={};
+  for(const input of activeLocalWorkflow.inputs||[]){
+   const el=document.querySelector('[data-workflow-input="'+input.id+'"]');if(!el)continue;
+   let value;
+   if(input.type==='toggle')value=el.checked;
+   else if(input.type==='image'||input.type==='video'){
+    const file=el.files&&el.files[0];if(!file){if(input.required)throw new Error('Select a file for '+input.label);continue}
+    const form=new FormData();form.append('file',file);
+    const uploaded=await studioApi('/studio/comfy/upload-'+input.type,{method:'POST',body:form});
+    value=uploaded[input.type+'_ref'];
+   }else if(input.type==='number'||input.type==='slider'||input.type==='seed')value=Number(el.value);
+   else if(input.type==='select'&&typeof input.default==='number')value=Number(el.value);
+   else value=el.value;
+   if(input.required&&(value===undefined||value===null||value===''))throw new Error(input.label+' is required.');
+   if(value!==undefined&&value!==null&&value!=='')values[input.id]=value;
+  }
+  const result=await studioApi('/studio/workflows/'+encodeURIComponent(activeLocalWorkflow.id)+'/run',{method:'POST',body:JSON.stringify({values})});
+  activeLocalPromptId=result.prompt_id;$('refreshLocalJob').disabled=false;
+  $('localWorkflowJobStatus').textContent='Queued on local ComfyUI · prompt '+activeLocalPromptId+' · ₹0 goflow.ai inference charge (local hardware only).';
+  await pollLocalWorkflowJob();
+ }catch(e){$('localWorkflowJobStatus').textContent='Workflow submission failed: '+e.message}
+ finally{button.disabled=false}
+}
+async function pollLocalWorkflowJob(){
+ if(!activeLocalPromptId)return;
+ try{
+  const job=await studioApi('/studio/comfy/jobs/'+encodeURIComponent(activeLocalPromptId));
+  const state=job.status||'unknown';
+  $('localWorkflowJobStatus').textContent='ComfyUI job '+activeLocalPromptId+': '+state+'.';
+  if(job.imported_media&&job.imported_media.length){
+   $('localWorkflowOutputs').innerHTML='<h3>Imported outputs</h3>'+job.imported_media.map(item=>'<div class="item"><b>'+escapeHtml(item.filename)+'</b><span class="muted">'+escapeHtml(item.media_type)+' · '+Math.round(item.size_bytes/1024)+' KB</span></div>').join('');
+   await refreshStudioMedia();
+  }
+  if(state==='completed'||state==='processing_or_failed'&&job.execution_status&&job.execution_status.status_str==='error'){
+   if(state!=='completed')$('localWorkflowJobStatus').textContent+=' Check ComfyUI execution details for the failure.';
+   $('refreshLocalJob').disabled=false;return;
+  }
+  if(state==='queued_or_running'||state==='processing_or_failed')$('refreshLocalJob').disabled=false;
+ }catch(e){$('localWorkflowJobStatus').textContent='Could not read job status: '+e.message}
+}
+$('runLocalWorkflow').onclick=runSelectedLocalWorkflow;
+$('refreshLocalJob').onclick=pollLocalWorkflowJob;
 async function studioApi(path,options={}){const key=$('apiKey').value.trim();if(!key)throw new Error('Enter the backend API key in the Render a source video section first.');const headers={...apiHeaders(),...(options.headers||{})};if(options.body&&!(options.body instanceof FormData)&&!Object.keys(headers).some(name=>name.toLowerCase()==='content-type'))headers['Content-Type']='application/json';const response=await fetch(apiBase()+'/api/v1'+path,{...options,headers});const data=await response.json().catch(()=>({}));if(!response.ok)throw new Error(data.detail||'Studio API request failed (HTTP '+response.status+')');return data}
 $('planStoryBtn').onclick=async()=>{const idea=$('script').value.trim()||$('title').value.trim();if(idea.length<8){$('storyPlanStatus').textContent='Add at least 8 characters of story idea in Project brief first.';return}const button=$('planStoryBtn');button.disabled=true;$('storyPlanStatus').textContent='Building editable story plan…';try{const ratio=$('ratio').value.startsWith('9:16')?'9:16':$('ratio').value.startsWith('16:9')?'16:9':'1:1';const plan=await studioApi('/story/plan',{method:'POST',body:JSON.stringify({idea,language:$('language').value,target_duration_seconds:Number($('duration').value)||55,aspect_ratio:ratio,genre:'mystery',tone:'cinematic',audience:'general',character_notes:$('character').value,location_notes:$('locations').value,visual_style:$('direction').value||'cinematic realism',scene_count:6})});scenes=plan.scenes.map((scene)=>({duration:Number(scene.duration_seconds)||6,camera:scene.camera_direction||'Cinematic camera movement',shot:'Medium',desc:scene.title+' — '+(scene.visual_description||scene.purpose||''),prompt:scene.image_prompt||scene.video_prompt||'',continuity:typeof scene.continuity==='string'?scene.continuity:JSON.stringify(scene.continuity||{}),voiceover:scene.voiceover||'',dialogue:scene.dialogue||'',videoPrompt:scene.video_prompt||'',sceneNumber:scene.scene_number}));renderScenes();save(true);$('generationSceneNumber').max=scenes.length;$('generationSceneNumber').value=1;$('storyPlanStatus').textContent='Plan received via '+(plan.engine||'story planner')+'. '+scenes.length+' editable scenes loaded. Creator review required; '+(plan.notice||'Review every scene before generation.');document.querySelector('[data-tab="storyboard"]').click()}catch(error){$('storyPlanStatus').textContent='Story planning failed: '+error.message}finally{button.disabled=false}};
 $('refreshProvidersBtn').onclick=async()=>{const button=$('refreshProvidersBtn');button.disabled=true;$('providerReadiness').textContent='Checking provider readiness…';try{const p=await studioApi('/studio/providers');$('providerReadiness').innerHTML='<div class="item"><span>Budget mode</span><b class="pill">'+escapeHtml(p.budget_mode)+'</b></div><div class="item"><span>Image generation</span><b class="pill">'+(p.image?.creates_media?'Media enabled':'Not connected · mock only')+'</b></div><div class="item"><span>Video generation</span><b class="pill">'+(p.video?.creates_media?'Media enabled':'Not connected · mock only')+'</b></div><div class="item"><span>Tamil voice</span><b class="pill">'+(p.voice?.available?'Local engine detected; Tamil model must be checked':'Not ready')+'</b></div><div class="item"><span>YouTube</span><b class="pill">'+(p.youtube?.configured?'OAuth file configured; authorization still required':'Not configured')+'</b></div>'}catch(error){$('providerReadiness').textContent='Provider check failed: '+error.message}finally{button.disabled=false}};
