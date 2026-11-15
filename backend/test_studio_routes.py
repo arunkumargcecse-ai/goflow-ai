@@ -82,6 +82,30 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["image_ref"], "goflow/reference.png")
 
+    @patch("studio_routes.comfy_upload_video")
+    def test_comfy_reference_video_upload_returns_local_video_reference(self, upload):
+        upload.return_value = {"video_ref": "goflow/reference.mp4", "name": "reference.mp4", "subfolder": "goflow", "type": "input"}
+        response = self.client.post(
+            "/api/v1/studio/comfy/upload-video", headers=self.headers,
+            files={"file": ("reference.mp4", b"fake-video-bytes", "video/mp4")},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["video_ref"], "goflow/reference.mp4")
+
+    def test_comfy_reference_video_upload_rejects_unsupported_media(self):
+        response = self.client.post(
+            "/api/v1/studio/comfy/upload-video", headers=self.headers,
+            files={"file": ("payload.txt", b"not-a-video", "text/plain")},
+        )
+        self.assertEqual(response.status_code, 415)
+
+    def test_comfy_reference_video_upload_requires_authentication(self):
+        response = self.client.post(
+            "/api/v1/studio/comfy/upload-video",
+            files={"file": ("reference.mp4", b"fake-video-bytes", "video/mp4")},
+        )
+        self.assertEqual(response.status_code, 401)
+
     def test_comfy_reference_image_upload_rejects_unsupported_media(self):
         response = self.client.post(
             "/api/v1/studio/comfy/upload-image", headers=self.headers,
