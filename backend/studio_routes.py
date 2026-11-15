@@ -26,6 +26,7 @@ from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
 from studio_composer import compose_video
 from local_tts import available_engines as local_tts_engines, synthesize_speech
+from reference_video import ReferenceVideoError, inspect_reference_video
 
 router = APIRouter()
 
@@ -277,6 +278,47 @@ async def upload_comfy_reference_video(file: UploadFile = File(...)):
     except ComfyUIError as exc:
         raise HTTPException(503, str(exc)) from exc
     return {"provider": "comfyui", **uploaded}
+
+
+@router.post("/studio/reference-videos/inspect", status_code=201)
+async def inspect_uploaded_reference_video(file: UploadFile = File(...)):
+    """Store a reference video locally and return ffprobe metadata for shot planning."""
+    content_type = (file.content_type or "").lower()
+    allowed_types = {"video/mp4": ".mp4", "video/webm": ".webm",
+                     "video/quicktime": ".mov", "video/x-matroska": ".mkv"}
+    if content_type not in allowed_types:
+        raise HTTPException(415, "Upload an MP4, WebM, QuickTime MOV or Matroska video.")
+    data = await file.read(100 * 1024 * 1024 + 1)
+    if len(data) > 100 * 1024 * 1024:
+        raise HTTPException(413, "Reference video exceeds the 100 MB limit.")
+    try:
+        metadata = inspect_reference_video(data)
+    except ReferenceVideoError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    init_studio_db()
+    media_id = uuid.uuid4().hex
+    filename = Path(file.filename or ("reference" + allowed_types[content_type])).name
+    extension = allowed_types[content_type]
+    stored_name = media_id + extension
+    destination = _studio_output_dir() / stored_name
+    destination.write_bytes(data)
+    try:
+        with _connect() as db:
+            db.execute(
+                """INSERT INTO studio_media
+                (id, filename, stored_name, media_type, content_type, size_bytes, source_prompt_id, created_at)
+                VALUES (?, ?, ?, 'video', ?, ?, '', ?)""",
+                (media_id, filename, stored_name, content_type, len(data), _now()),
+            )
+            db.commit()
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+    return {"media_id": media_id, "filename": filename,
+            "url": f"/api/v1/studio/media/{media_id}",
+            "analysis_status": "metadata_ready", **metadata}
 
 
 @router.get("/studio/comfy/wan-animate-readiness")

@@ -197,11 +197,12 @@ $('uploadMotionInputs').onclick=async()=>{
  try{
   const imageForm=new FormData();imageForm.append('file',imageFile);
   const videoForm=new FormData();videoForm.append('file',videoFile);
-  const [imageResult,videoResult]=await Promise.all([
+  const [imageResult,videoResult,inspection]=await Promise.all([
    studioApi('/studio/comfy/upload-image',{method:'POST',body:imageForm}),
-   studioApi('/studio/comfy/upload-video',{method:'POST',body:videoForm})
+   studioApi('/studio/comfy/upload-video',{method:'POST',body:videoForm}),
+   studioApi('/studio/reference-videos/inspect',{method:'POST',body:videoForm})
   ]);
-  status.textContent='Uploaded locally. Photo reference: '+(imageResult.image_ref||imageResult.name||'ready')+' · Driving video: '+(videoResult.video_ref||videoResult.name||'ready')+'. No motion generation has started.';
+  status.textContent='Uploaded to local ComfyUI and indexed in goflow.ai. '+inspection.orientation+' · '+inspection.width+'×'+inspection.height+' · '+inspection.duration_seconds+'s · '+inspection.fps+' fps. Photo: '+(imageResult.image_ref||imageResult.name||'ready')+' · Video: '+(videoResult.video_ref||videoResult.name||'ready')+'. Metadata inspection complete; motion generation has not started.';
  }catch(e){status.textContent='Upload failed: '+e.message}
  finally{btn.disabled=false}
 };

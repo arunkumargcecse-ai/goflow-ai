@@ -114,6 +114,33 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         response = self.client.get("/api/v1/studio/comfy/wan-animate-readiness")
         self.assertEqual(response.status_code, 401)
 
+    @patch("studio_routes.inspect_reference_video")
+    def test_reference_video_inspection_stores_video_and_returns_metadata(self, inspect):
+        inspect.return_value = {
+            "duration_seconds": 12.5, "width": 720, "height": 1280,
+            "fps": 30.0, "orientation": "portrait", "motion_transfer_generated": False,
+            "recommended_analysis": {"max_sample_frames": 12},
+        }
+        response = self.client.post(
+            "/api/v1/studio/reference-videos/inspect", headers=self.headers,
+            files={"file": ("reference.mp4", b"video-bytes", "video/mp4")},
+        )
+        self.assertEqual(response.status_code, 201)
+        payload = response.json()
+        self.assertEqual(payload["analysis_status"], "metadata_ready")
+        self.assertEqual(payload["orientation"], "portrait")
+        self.assertFalse(payload["motion_transfer_generated"])
+        media = self.client.get(payload["url"], headers=self.headers)
+        self.assertEqual(media.status_code, 200)
+        self.assertEqual(media.content, b"video-bytes")
+
+    def test_reference_video_inspection_rejects_wrong_content_type(self):
+        response = self.client.post(
+            "/api/v1/studio/reference-videos/inspect", headers=self.headers,
+            files={"file": ("notes.txt", b"not-video", "text/plain")},
+        )
+        self.assertEqual(response.status_code, 415)
+
     def test_comfy_reference_video_upload_requires_authentication(self):
         response = self.client.post(
             "/api/v1/studio/comfy/upload-video",
