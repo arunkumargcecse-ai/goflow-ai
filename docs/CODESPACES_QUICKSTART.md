@@ -12,7 +12,7 @@ This setup provisions a browser-based development environment for the existing g
    - FastAPI at port 8000
 5. In the Codespaces **Ports** panel, open port 3000. Keep both forwarded ports set to **Private**.
 6. Copy the forwarded HTTPS URL for port 8000 (the hostname ending in `-8000.app.github.dev`). In Creator Studio, paste it into **Backend API URL**.
-7. Copy the one-time API key printed in the Codespaces terminal and enter it in the API key field.
+7. Copy the API key printed by the post-start script and enter it in the API key field. If you need to retrieve it later, run `cat ~/.goflow/codespaces-api-key` in the Codespaces terminal.
 
 ## Data and lifecycle
 

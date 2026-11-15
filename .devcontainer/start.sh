@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# A fresh per-Codespace API key is generated locally and never committed.
-KEY_FILE="/tmp/goflow-codespaces-api-key"
+# Keep the per-Codespace key in the private home directory so it survives
+# stop/start cycles. It is never written into the repository.
+STATE_DIR="$HOME/.goflow"
+KEY_FILE="$STATE_DIR/codespaces-api-key"
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
 if [[ ! -s "$KEY_FILE" ]]; then
   python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
 fi
 export GOFLOW_API_KEY="$(cat "$KEY_FILE")"
-export GOFLOW_DATA_DIR="${CODESPACE_VOLUMES:-$HOME/.goflow}/data"
+export GOFLOW_DATA_DIR="${CODESPACE_VOLUMES:-$STATE_DIR}/data"
 mkdir -p "$GOFLOW_DATA_DIR"
 
-if ! pgrep -f "uvicorn main:app.*8000" >/dev/null 2>&1; then
+# Bracketed process patterns avoid matching the pgrep command itself.
+if ! pgrep -f '[u]vicorn main:app.*--port 8000' >/dev/null 2>&1; then
   (cd backend && nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/goflow-api.log 2>&1 &)
 fi
-if ! pgrep -f "http.server 3000" >/dev/null 2>&1; then
+if ! pgrep -f '[p]ython -m http.server 3000' >/dev/null 2>&1; then
   nohup python -m http.server 3000 --bind 0.0.0.0 > /tmp/goflow-web.log 2>&1 &
 fi
 
@@ -26,5 +31,6 @@ goflow.ai services starting:
 
 In the Creator Studio, set Backend API URL to the forwarded HTTPS URL for port 8000
 (the URL ending in -8000.app.github.dev), then enter the API key above.
+If you need the key again, run: cat "$KEY_FILE"
 Logs: /tmp/goflow-api.log and /tmp/goflow-web.log
 EOF
