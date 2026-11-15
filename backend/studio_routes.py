@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -257,6 +258,17 @@ def _import_comfy_outputs(prompt_id: str, outputs: dict) -> list[dict]:
                 if extension not in allowed:
                     continue
                 media_type, expected_type = allowed[extension]
+                with _connect() as db:
+                    existing = db.execute(
+                        "SELECT id, size_bytes FROM studio_media WHERE source_prompt_id = ? AND filename = ?",
+                        (prompt_id, filename),
+                    ).fetchone()
+                if existing:
+                    imported.append({
+                        "media_id": existing["id"], "filename": filename, "media_type": media_type,
+                        "size_bytes": existing["size_bytes"], "url": f"/api/v1/studio/media/{existing['id']}",
+                    })
+                    continue
                 subfolder = item.get("subfolder", "")
                 output_type = item.get("type", "output")
                 data, content_type = comfy_download_output(filename, subfolder, output_type)
