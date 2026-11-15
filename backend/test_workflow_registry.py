@@ -34,6 +34,7 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
                 {"id": "resolution", "type": "select", "label": "Resolution", "default": 1,
                  "options": [{"value": 1, "label": "1K"}, {"value": 2, "label": "2K"}],
                  "bind": [{"node": "1", "field": "resolution"}]},
+                {"id": "reference", "type": "image", "label": "Reference image", "bind": [{"node": "3", "field": "image"}]},
                 {"id": "aspect", "type": "select", "label": "Aspect", "default": "1:1",
                  "options": [{"value": "9:16", "label": "Vertical", "sets": [
                      {"node": "2", "field": "width", "value": 768},
@@ -49,6 +50,7 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
         graph = {
             "1": {"class_type": "TestSampler", "inputs": {"text": "", "steps": 1}},
             "2": {"class_type": "SaveImage", "inputs": {"images": ["1", 0], "width": 1024, "height": 1024}},
+            "3": {"class_type": "LoadImage", "inputs": {"image": ""}},
         }
         (app / "app.json").write_text(json.dumps(manifest), encoding="utf-8")
         (app / "workflow.api.json").write_text(json.dumps(graph), encoding="utf-8")
@@ -78,6 +80,18 @@ class LocalWorkflowRegistryTests(unittest.TestCase):
             build_workflow_prompt("sample-image", {"prompt": "ok", "arbitrary": "node injection"})
         with self.assertRaises(WorkflowRegistryError):
             build_workflow_prompt("sample-image", {"prompt": "ok", "steps": 999})
+
+    def test_binds_safe_local_reference_image(self):
+        graph, _ = build_workflow_prompt(
+            "sample-image", {"prompt": "portrait", "reference": "goflow/reference.png"}
+        )
+        self.assertEqual(graph["3"]["inputs"]["image"], "goflow/reference.png")
+
+    def test_rejects_unsafe_reference_image_path(self):
+        with self.assertRaises(WorkflowRegistryError):
+            build_workflow_prompt(
+                "sample-image", {"prompt": "portrait", "reference": "../secret.png"}
+            )
 
     def test_rejects_missing_required_input(self):
         with self.assertRaises(WorkflowRegistryError):
