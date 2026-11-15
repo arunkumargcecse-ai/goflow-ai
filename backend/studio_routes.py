@@ -302,6 +302,22 @@ def _import_comfy_outputs(prompt_id: str, outputs: dict) -> list[dict]:
     return imported
 
 
+@router.get("/studio/media")
+def list_studio_media():
+    """List locally imported generated assets for the Studio timeline."""
+    init_studio_db()
+    with _connect() as db:
+        rows = db.execute(
+            """SELECT id, filename, media_type, content_type, size_bytes,
+                      source_prompt_id, created_at
+               FROM studio_media ORDER BY created_at DESC LIMIT 200"""
+        ).fetchall()
+    return {"items": [
+        {**dict(row), "url": f"/api/v1/studio/media/{row['id']}"}
+        for row in rows
+    ]}
+
+
 @router.get("/studio/media/{media_id}")
 def get_studio_media(media_id: str):
     if not re.fullmatch(r"[a-f0-9]{32}", media_id):
