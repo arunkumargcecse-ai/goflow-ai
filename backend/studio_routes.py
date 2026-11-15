@@ -743,7 +743,7 @@ def preview_reference_shot(map_id: str, shot_index: int, payload: ShotPreviewReq
     else:
         analysis_id = shot.get("analysis_id", "")
         filename = shot.get("frame_filename", "")
-        if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\\.jpg", filename):
+        if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\.jpg", filename):
             raise HTTPException(422, "The shot has an invalid reference frame.")
         analysis_root = (_studio_output_dir() / "reference-analysis").resolve()
         frame_path = (analysis_root / analysis_id / filename).resolve()
