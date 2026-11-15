@@ -159,7 +159,8 @@ async function checkMotionReadiness(){
  try{
   const data=await studioApi('/studio/comfy/wan-animate-readiness');
   const devices=(data.devices||[]).map(d=>'<div class="item"><span>'+escapeHtml(d.name)+' · '+escapeHtml(d.type)+'</span><b>'+(d.vram_total_bytes?Math.round(d.vram_total_bytes/1073741824)+' GB VRAM':'VRAM unavailable')+'</b></div>').join('');
-  root.innerHTML='<div class="item"><span>Required nodes</span><b>'+((data.available_nodes||[]).length)+' / '+((data.required_nodes||[]).length)+'</b></div><div class="item"><span>Missing nodes</span><b>'+escapeHtml((data.missing_nodes||[]).join(', ')||'None detected')+'</b></div>'+devices+'<div class="item"><span>Model weights</span><b>Not verified</b></div>';
+  const missingModels=(data.missing_models||[]).map(name=>'<div class="item"><span>'+escapeHtml(name)+'</span><b>Missing</b></div>').join('');
+  root.innerHTML='<div class="item"><span>Required nodes</span><b>'+((data.available_nodes||[]).length)+' / '+((data.required_nodes||[]).length)+'</b></div><div class="item"><span>Missing nodes</span><b>'+escapeHtml((data.missing_nodes||[]).join(', ')||'None detected')+'</b></div>'+devices+'<div class="item"><span>Model files detected</span><b>'+((data.available_models||[]).length)+' / '+((data.required_models||[]).length)+'</b></div>'+missingModels;
   status.textContent=data.ready_to_generate?'Engine reports ready; a real test is still required.':'Preflight complete. Generation is not enabled yet: '+(data.next_step||'verify local models and hardware.');
  }catch(e){status.textContent='Readiness check failed: '+e.message}
  finally{btn.disabled=false}

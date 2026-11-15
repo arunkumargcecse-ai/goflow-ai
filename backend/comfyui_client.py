@@ -1,6 +1,6 @@
 """Fixed-origin ComfyUI API client; never accepts a target URL from the browser."""
 from __future__ import annotations
-import os, re
+import json, os, re
 from typing import Any
 import httpx
 
@@ -72,6 +72,20 @@ def inspect_wan_animate_readiness() -> dict[str, Any]:
     required_nodes = ["WanAnimateToVideo", "DWPreprocessor", "DownloadAndLoadSAM2Model", "Sam2Segmentation", "LoadVideo"]
     available = sorted(name for name in required_nodes if name in object_info)
     missing = sorted(set(required_nodes) - set(available))
+    # ComfyUI exposes installed model filenames through node input option lists.
+    # Check the exact filenames referenced by the official Wan 2.2 Animate template.
+    required_models = {
+        "Wan2_2-Animate-14B_fp8_e4m3fn_scaled_KJ.safetensors": "diffusion_models",
+        "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors": "loras",
+        "WanAnimate_relight_lora_fp16.safetensors": "loras",
+        "umt5_xxl_fp8_e4m3fn_scaled.safetensors": "text_encoders",
+        "clip_vision_h.safetensors": "clip_visions",
+        "wan_2.1_vae.safetensors": "vae",
+        "sam2_hiera_base_plus.safetensors": "sam2",
+    }
+    object_info_text = json.dumps(object_info, ensure_ascii=False)
+    installed_models = sorted(name for name in required_models if name in object_info_text)
+    missing_models = sorted(set(required_models) - set(installed_models))
     devices = system_stats.get("devices", []) if isinstance(system_stats, dict) else []
     device_summary = []
     for device in devices if isinstance(devices, list) else []:
@@ -84,9 +98,12 @@ def inspect_wan_animate_readiness() -> dict[str, Any]:
     return {"workflow_family": "wan2.2-animate", "available": True,
         "nodes_ready": not missing, "required_nodes": required_nodes,
         "available_nodes": available, "missing_nodes": missing,
-        "devices": device_summary, "model_weights_verified": False,
+        "required_models": [{"filename": name, "folder": folder} for name, folder in required_models.items()],
+        "available_models": installed_models,
+        "missing_models": missing_models,
+        "devices": device_summary, "model_weights_verified": not missing_models,
         "ready_to_generate": False,
-        "next_step": "Verify model weights and run a short local test. This check did not download or generate anything."}
+        "next_step": "Install any missing model files and required custom nodes, then run a short local test. This check did not download or generate anything."}
 
 
 def upload_image(filename: str, content_type: str, data: bytes) -> dict[str, str]:
