@@ -92,6 +92,20 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["available"])
 
+    def test_workflow_catalog_is_curated_and_never_claims_unregistered_graphs_are_ready(self):
+        response = self.client.get("/api/v1/studio/workflows", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["count"], 5)
+        self.assertEqual(payload["ready_count"], 0)
+        self.assertTrue(all(item["ready"] is False for item in payload["workflows"]))
+        self.assertTrue(all(item["workflow_id"] is None for item in payload["workflows"]))
+
+    def test_workflow_catalog_category_filter(self):
+        response = self.client.get("/api/v1/studio/workflows?category=video", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["category"] for item in response.json()["workflows"]}, {"video"})
+
     def test_provider_capabilities_never_claim_mock_media_is_real(self):
         response = self.client.get("/api/v1/studio/providers", headers=self.headers)
         self.assertEqual(response.status_code, 200)
