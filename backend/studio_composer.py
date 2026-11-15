@@ -45,8 +45,9 @@ def compose_video(
     height: int = 1920,
     preset: str = "slow",
     crf: int = 18,
+    audio_tracks: list[dict] | None = None,
 ) -> dict:
-    """Compose ordered image/video clips, adding subtle motion to stills by default."""
+    """Compose ordered visual clips and mix optional, independently timed audio tracks."""
     ffmpeg = shutil.which("ffmpeg")
     ffprobe = shutil.which("ffprobe")
     if not ffmpeg or not ffprobe:
@@ -57,6 +58,16 @@ def compose_video(
         raise ValueError("Output dimensions must be between 320 and 3840 pixels.")
     if preset not in {"veryfast", "medium", "slow", "veryslow"}:
         raise ValueError("Unsupported FFmpeg preset.")
+    tracks = list(audio_tracks or [])
+    if len(tracks) > 20:
+        raise ValueError("At most 20 audio tracks can be mixed into one render.")
+    for track in tracks:
+        volume = float(track.get("volume", 1.0))
+        start = float(track.get("start_seconds", 0.0))
+        if not 0 <= volume <= 2:
+            raise ValueError("Audio track volume must be between 0 and 2.")
+        if not 0 <= start <= 3600:
+            raise ValueError("Audio track start time must be between 0 and 3600 seconds.")
 
     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
     filters: list[str] = []
@@ -69,9 +80,7 @@ def compose_video(
         media_type = clip["media_type"]
         if media_type == "image":
             command += ["-loop", "1", "-framerate", "30", "-t", str(duration), "-i", str(path)]
-            filters.append(_image_motion_filter(
-                index, duration, width, height, clip.get("motion", "zoom_in")
-            ))
+            filters.append(_image_motion_filter(index, duration, width, height, clip.get("motion", "zoom_in")))
         elif media_type == "video":
             start = float(clip.get("source_in") or 0)
             end = clip.get("source_out")
@@ -91,13 +100,45 @@ def compose_video(
 
     total_duration = sum(float(clip["duration"]) for clip in clips)
     filters.append("".join(concat_labels) + f"concat=n={len(clips)}:v=1:a=0[vout]")
+
+    audio_input_index = len(clips)
+    audio_labels: list[str] = []
+    # Backwards-compatible soundtrack input; new projects should use audio_tracks.
     if audio_path:
-        audio_index = len(clips)
         command += ["-stream_loop", "-1", "-i", str(Path(audio_path).resolve())]
-        filters.append(f"[{audio_index}:a]atrim=duration={total_duration},asetpts=PTS-STARTPTS[aout]")
+        filters.append(
+            f"[{audio_input_index}:a]atrim=duration={total_duration},asetpts=PTS-STARTPTS[audio_legacy]"
+        )
+        audio_labels.append("[audio_legacy]")
+        audio_input_index += 1
+
+    for track_number, track in enumerate(tracks):
+        path = Path(track["path"]).resolve()
+        if track.get("loop", False):
+            command += ["-stream_loop", "-1", "-i", str(path)]
+        else:
+            command += ["-i", str(path)]
+        delay_ms = int(float(track.get("start_seconds", 0.0)) * 1000)
+        volume = float(track.get("volume", 1.0))
+        label = f"audio_track_{track_number}"
+        filters.append(
+            f"[{audio_input_index}:a]asetpts=PTS-STARTPTS,volume={volume:g},"
+            f"adelay={delay_ms}|{delay_ms},apad,atrim=duration={total_duration}[{label}]"
+        )
+        audio_labels.append(f"[{label}]")
+        audio_input_index += 1
+
     command += ["-filter_complex", ";".join(filters), "-map", "[vout]"]
-    if audio_path:
-        command += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
+    if audio_labels:
+        if len(audio_labels) == 1:
+            command += ["-map", audio_labels[0], "-c:a", "aac", "-b:a", "192k"]
+        else:
+            mix = "".join(audio_labels) + (
+                f"amix=inputs={len(audio_labels)}:duration=longest:dropout_transition=0:normalize=0,"
+                f"alimiter=limit=0.95,atrim=duration={total_duration}[aout]"
+            )
+            command[command.index("-filter_complex") + 1] += ";" + mix
+            command += ["-map", "[aout]", "-c:a", "aac", "-b:a", "192k"]
     else:
         command += ["-an"]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -124,4 +165,5 @@ def compose_video(
         "duration_seconds": actual_duration, "width": width, "height": height,
         "size_bytes": output_path.stat().st_size,
         "motion_presets": sorted({clip.get("motion", "zoom_in") for clip in clips if clip["media_type"] == "image"}),
+        "audio_track_count": len(audio_labels),
     }
