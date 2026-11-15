@@ -18,7 +18,8 @@ from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
 from comfyui_client import ComfyUIError, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit
-from story_engine import StoryPlanRequest, create_story_plan as build_story_plan\nfrom workflow_catalog import list_workflows
+from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
+from workflow_catalog import list_workflows
 
 router = APIRouter()
 
