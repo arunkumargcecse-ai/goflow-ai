@@ -56,6 +56,39 @@ def get_queue() -> dict[str, Any]:
         raise ComfyUIError(f"Could not read ComfyUI queue: {exc}") from exc
 
 
+
+def inspect_wan_animate_readiness() -> dict[str, Any]:
+    """Inspect local ComfyUI node and device availability without downloading anything."""
+    try:
+        with _client() as client:
+            info_response = client.get(f"{base_url()}/object_info")
+            info_response.raise_for_status()
+            object_info = info_response.json()
+            stats_response = client.get(f"{base_url()}/system_stats")
+            stats_response.raise_for_status()
+            system_stats = stats_response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ComfyUIError(f"Could not inspect local ComfyUI readiness: {exc}") from exc
+    required_nodes = ["WanAnimateToVideo", "DWPreprocessor", "DownloadAndLoadSAM2Model", "Sam2Segmentation", "LoadVideo"]
+    available = sorted(name for name in required_nodes if name in object_info)
+    missing = sorted(set(required_nodes) - set(available))
+    devices = system_stats.get("devices", []) if isinstance(system_stats, dict) else []
+    device_summary = []
+    for device in devices if isinstance(devices, list) else []:
+        if isinstance(device, dict):
+            total, free = device.get("vram_total"), device.get("vram_free")
+            device_summary.append({"name": str(device.get("name", "unknown"))[:160],
+                "type": str(device.get("type", "unknown"))[:40],
+                "vram_total_bytes": total if isinstance(total, int) else None,
+                "vram_free_bytes": free if isinstance(free, int) else None})
+    return {"workflow_family": "wan2.2-animate", "available": True,
+        "nodes_ready": not missing, "required_nodes": required_nodes,
+        "available_nodes": available, "missing_nodes": missing,
+        "devices": device_summary, "model_weights_verified": False,
+        "ready_to_generate": False,
+        "next_step": "Verify model weights and run a short local test. This check did not download or generate anything."}
+
+
 def upload_image(filename: str, content_type: str, data: bytes) -> dict[str, str]:
     """Upload a validated image to the configured local ComfyUI input directory."""
     allowed = {"image/png", "image/jpeg", "image/webp"}

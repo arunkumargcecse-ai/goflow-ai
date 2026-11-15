@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from generation_providers import GenerationRequest, submit_generation
-from comfyui_client import ComfyUIError, download_output as comfy_download_output, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image, upload_video as comfy_upload_video
+from comfyui_client import ComfyUIError, download_output as comfy_download_output, get_history as comfy_history, get_queue as comfy_queue, submit_prompt as comfy_submit, upload_image as comfy_upload_image, upload_video as comfy_upload_video, inspect_wan_animate_readiness
 from story_engine import StoryPlanRequest, create_story_plan as build_story_plan
 from workflow_catalog import list_workflows
 from workflow_registry import WorkflowRegistryError, build_workflow_prompt, get_workflow_form, list_local_workflows
@@ -229,6 +229,16 @@ async def upload_comfy_reference_video(file: UploadFile = File(...)):
     except ComfyUIError as exc:
         raise HTTPException(503, str(exc)) from exc
     return {"provider": "comfyui", **uploaded}
+
+
+@router.get("/studio/comfy/wan-animate-readiness")
+def wan_animate_readiness():
+    """Check local Wan Animate nodes and hardware visibility; never downloads models."""
+    try:
+        return inspect_wan_animate_readiness()
+    except ComfyUIError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
 
 @router.get("/studio/comfy/status")
 def comfy_status():

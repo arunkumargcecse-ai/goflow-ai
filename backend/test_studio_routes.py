@@ -99,6 +99,21 @@ class StudioOrchestrationApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 415)
 
+    @patch("studio_routes.inspect_wan_animate_readiness")
+    def test_wan_animate_readiness_reports_missing_nodes_without_generation(self, inspect):
+        inspect.return_value = {"workflow_family": "wan2.2-animate", "available": True,
+            "nodes_ready": False, "required_nodes": ["WanAnimateToVideo"],
+            "available_nodes": [], "missing_nodes": ["WanAnimateToVideo"], "devices": [],
+            "model_weights_verified": False, "ready_to_generate": False, "next_step": "Install locally."}
+        response = self.client.get("/api/v1/studio/comfy/wan-animate-readiness", headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["ready_to_generate"])
+        self.assertEqual(response.json()["missing_nodes"], ["WanAnimateToVideo"])
+
+    def test_wan_animate_readiness_requires_authentication(self):
+        response = self.client.get("/api/v1/studio/comfy/wan-animate-readiness")
+        self.assertEqual(response.status_code, 401)
+
     def test_comfy_reference_video_upload_requires_authentication(self):
         response = self.client.post(
             "/api/v1/studio/comfy/upload-video",
