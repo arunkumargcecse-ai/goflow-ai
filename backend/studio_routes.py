@@ -698,6 +698,84 @@ def _shot_motion_preset(direction: str) -> str:
     return "zoom_in"
 
 
+class ShotPreviewRequest(BaseModel):
+    duration_seconds: float = Field(default=2.5, ge=1, le=8)
+    width: int = Field(default=360, ge=320, le=720)
+    height: int = Field(default=640, ge=320, le=1280)
+    crf: int = Field(default=25, ge=20, le=28)
+
+
+@router.post("/studio/reference-videos/shot-maps/{map_id}/shots/{shot_index}/preview", status_code=202)
+def preview_reference_shot(map_id: str, shot_index: int, payload: ShotPreviewRequest):
+    """Queue a short, low-resolution FFmpeg preview of one saved shot."""
+    if not re.fullmatch(r"[a-f0-9]{32}", map_id):
+        raise HTTPException(422, "Invalid shot map id.")
+    if not 1 <= shot_index <= 12:
+        raise HTTPException(422, "Shot index must be between 1 and 12.")
+    init_studio_db()
+    with _connect() as db:
+        row = db.execute(
+            "SELECT map_json FROM studio_reference_shot_maps WHERE id = ?", (map_id,)
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Reference shot map not found.")
+    shot_map = json.loads(row["map_json"])
+    shots = shot_map.get("shots", [])
+    if shot_index > len(shots):
+        raise HTTPException(404, "Shot does not exist in this shot map.")
+    shot = shots[shot_index - 1]
+    media_id = shot.get("character_media_id")
+    if not media_id and shot.get("character_id"):
+        with _connect() as db:
+            character_row = db.execute(
+                "SELECT profile_json FROM studio_characters WHERE id = ?",
+                (shot["character_id"],),
+            ).fetchone()
+        if not character_row:
+            raise HTTPException(422, "The selected character profile no longer exists.")
+        profile = json.loads(character_row["profile_json"])
+        references = profile.get("reference_media_ids") or []
+        media_id = references[0] if references else None
+    if media_id:
+        asset = _studio_media_record(media_id)
+        if asset["media_type"] != "image":
+            raise HTTPException(422, "The shot character reference must be an image.")
+    else:
+        analysis_id = shot.get("analysis_id", "")
+        filename = shot.get("frame_filename", "")
+        if not re.fullmatch(r"[a-f0-9]{32}", analysis_id) or not re.fullmatch(r"frame-[0-9]{2}\.jpg", filename):
+            raise HTTPException(422, "The shot has an invalid reference frame.")
+        analysis_root = (_studio_output_dir() / "reference-analysis").resolve()
+        frame_path = (analysis_root / analysis_id / filename).resolve()
+        if analysis_root not in frame_path.parents or not frame_path.is_file():
+            raise HTTPException(422, "The shot reference frame is unavailable.")
+        media_id = uuid.uuid4().hex
+        stored_name = media_id + ".jpg"
+        destination = _studio_output_dir() / stored_name
+        destination.write_bytes(frame_path.read_bytes())
+        try:
+            with _connect() as db:
+                db.execute(
+                    """INSERT INTO studio_media
+                    (id, filename, stored_name, media_type, content_type, size_bytes, source_prompt_id, created_at)
+                    VALUES (?, ?, ?, 'image', 'image/jpeg', ?, ?, ?)""",
+                    (media_id, f"shot-preview-{shot_index:02d}.jpg", stored_name,
+                     destination.stat().st_size, "shot-map-" + map_id, _now()),
+                )
+                db.commit()
+        except Exception:
+            destination.unlink(missing_ok=True)
+            raise
+    motion = _shot_motion_preset(shot.get("camera_direction", ""))
+    return create_studio_render(StudioCompositionRequest(
+        clips=[{"media_id": media_id, "duration": payload.duration_seconds, "motion": motion}],
+        width=payload.width,
+        height=payload.height,
+        preset="veryfast",
+        crf=payload.crf,
+    ))
+
+
 @router.post("/studio/reference-videos/shot-maps/{map_id}/render", status_code=202)
 def render_reference_shot_map(map_id: str, payload: ShotMapRenderRequest):
     """Render an editable shot map locally as a cinematic still-based MP4.
