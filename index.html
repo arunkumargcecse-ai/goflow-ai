@@ -198,7 +198,8 @@ $('approveStyle').onclick=()=>{approved=true;$('styleApproval').textContent='Sty
 
 let currentReferenceMediaId=null;
 let currentReferenceAnalysis=null;
-let currentReferenceShots=[];\nlet studioCharacters=[];
+let currentReferenceShots=[];
+let studioCharacters=[];
 function renderReferenceShotMap(){
  const root=$('referenceFrameMap');
  if(!currentReferenceAnalysis){root.innerHTML='';return}
@@ -233,7 +234,7 @@ $('createCharacterProfile').onclick=async()=>{
  const name=$('characterProfileName').value.trim(),identity=$('characterIdentity').value.trim();
  if(!name||!identity){status.textContent='Enter a character name and identity description.';return}
  const referenceId=$('characterReferenceImage').value;
- const payload={name,identity,appearance:$('characterAppearance').value.trim(),wardrobe:$('characterWardrobe').value.trim(),continuity_rules:$('characterContinuity').value.split('\\n').map(x=>x.trim()).filter(Boolean),negative_guidance:$('characterNegative').value.trim(),reference_media_ids:referenceId?[referenceId]:[]};
+ const payload={name,identity,appearance:$('characterAppearance').value.trim(),wardrobe:$('characterWardrobe').value.trim(),continuity_rules:$('characterContinuity').value.split('\n').map(x=>x.trim()).filter(Boolean),negative_guidance:$('characterNegative').value.trim(),reference_media_ids:referenceId?[referenceId]:[]};
  button.disabled=true;status.textContent='Saving character bible locally…';
  try{
   const saved=await studioApi('/studio/characters',{method:'POST',body:JSON.stringify(payload)});
