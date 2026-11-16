@@ -25,7 +25,7 @@ export GOFLOW_DATA_DIR="${CODESPACE_VOLUMES:-$STATE_DIR}/data"
 mkdir -p "$GOFLOW_DATA_DIR"
 
 if ! pgrep -f '[u]vicorn main:app.*--port 8000' >/dev/null 2>&1; then
-  (cd backend && nohup "$OLDPWD/.venv/bin/python" -m uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/goflow-api.log 2>&1 &)
+  (cd backend && nohup "$ROOT_DIR/.venv/bin/python" -m uvicorn main:app --host 0.0.0.0 --port 8000 > /tmp/goflow-api.log 2>&1 &)
 fi
 if ! pgrep -f '[p]ython -m http.server 3000' >/dev/null 2>&1; then
   nohup .venv/bin/python -m http.server 3000 --bind 0.0.0.0 > /tmp/goflow-web.log 2>&1 &
