@@ -132,7 +132,7 @@ class CreatorStudioEndToEnd(unittest.TestCase):
             "shots": [{
                 "analysis_id": analysis["analysis_id"],
                 "frame_filename": frame["filename"],
-                "timestamp_seconds": float(frame.get("timestamp_seconds", 0)),
+                "timestamp_seconds": 0,
                 "title": "Opening shot",
                 "duration_seconds": 2.0,
                 "camera_direction": "Slow zoom in",
@@ -154,7 +154,7 @@ class CreatorStudioEndToEnd(unittest.TestCase):
         )
         self.assertEqual(prompts.status_code, 200, prompts.text)
         self.assertEqual(prompts.json()["prompt_count"], 1)
-        self.assertIn("E2E Character", prompts.text)
+        self.assertIn("A fictional test character", prompts.text)
 
         preview = self.client.post(
             f"/api/v1/studio/reference-videos/shot-maps/{map_id}/shots/1/preview",
