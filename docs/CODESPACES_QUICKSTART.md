@@ -6,7 +6,7 @@ This setup provisions a browser-based development environment for the existing g
 
 1. Open the repository on GitHub.
 2. Select **Code → Codespaces → Create codespace** and choose the `feat/codespaces-cloud-dev-environment` branch (or `main` after this change is merged).
-3. Wait for the Codespace to finish creating. The post-create script installs the Python requirements and FFmpeg.
+3. Wait for the Codespace to finish creating. The post-create script installs FFmpeg and backend requirements into an isolated `.venv` Python environment. The startup script also repairs a missing/incomplete environment automatically.
 4. The post-start script launches:
    - static Creator Studio at port 3000
    - FastAPI at port 8000
