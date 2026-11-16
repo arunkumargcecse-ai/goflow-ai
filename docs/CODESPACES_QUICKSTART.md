@@ -27,3 +27,8 @@ This setup provisions a browser-based development environment for the existing g
 - FFmpeg-based editing, reference frame extraction, shot-map previews and 720p CPU rendering can run, subject to Codespaces CPU and storage limits.
 - Heavy diffusion/video models such as Wan 2.2 Animate 14B are not provided by this environment and should not be expected to run.
 - This is a temporary development environment. Permanent public hosting still requires a separately provisioned host and secure deployment configuration.
+
+
+## Automatic Creator Studio connection
+
+When Creator Studio is opened from the forwarded Codespaces port `3000`, the UI automatically derives the matching port `8000` HTTPS URL. In **Quality & tools → Backend connection**, paste the API key printed by `cat ~/.goflow/codespaces-api-key`, then use **Check API health**. The key remains in the current browser tab only; it is not saved in project data. If you are not using the Codespaces port 3000 URL, enter the backend HTTPS URL manually.
