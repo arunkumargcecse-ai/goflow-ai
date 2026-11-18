@@ -12,7 +12,19 @@ def base_url() -> str:
     return os.getenv("GOFLOW_COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 
 def _client() -> httpx.Client:
-    return httpx.Client(timeout=httpx.Timeout(30.0, read=120.0))
+    """Create a client for the configured ComfyUI worker.
+
+    When GOFLOW_COMFYUI_API_KEY is set, it is sent only from this backend to
+    the configured worker as a Bearer token. Keep the worker URL on HTTPS when
+    crossing the public internet; never put this key in browser-side settings.
+    """
+    api_key = os.getenv("GOFLOW_COMFYUI_API_KEY", "").strip()
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    return httpx.Client(
+        timeout=httpx.Timeout(30.0, read=300.0),
+        headers=headers,
+        follow_redirects=False,
+    )
 
 def submit_prompt(workflow: dict[str, Any], client_id: str | None = None) -> dict[str, Any]:
     if not workflow or len(workflow) > 1000:
