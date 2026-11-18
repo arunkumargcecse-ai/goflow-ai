@@ -111,3 +111,9 @@ def reserve_remote_job(job_id: str) -> dict:
         "max_runtime_minutes": round(minutes, 2),
         "note": "Worst-case estimate reserved; actual provider billing may differ.",
     }
+
+def release_reservation(job_id: str) -> None:
+    """Release a reservation only when ComfyUI rejects submission."""
+    with _connect() as db:
+        db.execute("DELETE FROM gpu_budget_reservations WHERE id = ?", (job_id,))
+        db.commit()
