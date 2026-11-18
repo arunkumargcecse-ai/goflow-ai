@@ -30,6 +30,7 @@ from reference_video import ReferenceVideoError, inspect_reference_video
 from reference_analysis import ReferenceAnalysisError, analyze_reference_video
 from character_engine import build_shot_prompt
 from wan_workflow_export import WanWorkflowExportError, build_wan_animate_ui_workflow
+from gpu_budget import budget_status as get_gpu_budget_status, reserve_remote_job, release_reservation
 
 router = APIRouter()
 
@@ -149,14 +150,20 @@ class LocalWorkflowRun(BaseModel):
 
 @router.post("/studio/workflows/{workflow_id}/run", status_code=202)
 def run_local_workflow(workflow_id: str, payload: LocalWorkflowRun):
-    """Build a graph from a trusted local manifest and submit it to local ComfyUI."""
+    """Build a trusted workflow and enforce the remote GPU budget before submission."""
     try:
         graph, manifest = build_workflow_prompt(workflow_id, payload.values)
     except WorkflowRegistryError as exc:
         raise HTTPException(422, str(exc)) from exc
+    reservation_id = uuid.uuid4().hex
+    try:
+        estimate = reserve_remote_job(reservation_id)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(429, str(exc)) from exc
     try:
         result = comfy_submit(graph, payload.client_id)
     except (ComfyUIError, ValueError) as exc:
+        release_reservation(reservation_id)
         raise HTTPException(503 if isinstance(exc, ComfyUIError) else 422, str(exc)) from exc
     return {
         "provider": "comfyui",
@@ -165,7 +172,7 @@ def run_local_workflow(workflow_id: str, payload: LocalWorkflowRun):
         "prompt_id": result["prompt_id"],
         "status": "queued",
         "status_url": f"/api/v1/studio/comfy/jobs/{result['prompt_id']}",
-        "estimated_cost": "₹0 from goflow.ai; local hardware only (worker electricity/network costs may apply)",
+        "gpu_budget": estimate,
     }
 
 
@@ -446,15 +453,30 @@ def comfy_status():
         return {"available": False, "error": str(exc)}
 
 
+@router.get("/studio/comfy/gpu-budget")
+def comfy_gpu_budget():
+    """Report configured monthly cap and conservative remote GPU reservations."""
+    try:
+        return get_gpu_budget_status()
+    except ValueError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 @router.post("/studio/comfy/submit", status_code=202)
 def submit_comfy_workflow(payload: ComfyWorkflowSubmission):
+    reservation_id = uuid.uuid4().hex
+    try:
+        estimate = reserve_remote_job(reservation_id)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(429, str(exc)) from exc
     try:
         result = comfy_submit(payload.workflow, payload.client_id)
     except (ComfyUIError, ValueError) as exc:
+        release_reservation(reservation_id)
         raise HTTPException(503 if isinstance(exc, ComfyUIError) else 422, str(exc)) from exc
     return {"provider": "comfyui", "prompt_id": result["prompt_id"], "status": "queued",
             "status_url": f"/api/v1/studio/comfy/jobs/{result['prompt_id']}",
-            "estimated_cost": "₹0 from goflow.ai; local hardware only (worker electricity/network costs may apply)"}
+            "gpu_budget": estimate}
 
 
 def _studio_output_dir() -> Path:
